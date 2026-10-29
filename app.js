@@ -7,6 +7,7 @@ const TABS = {
   Presupuesto: ['nivel1', 'nivel2', 'monto'],
   Proyeccion: ['mes', 'ingreso_base', 'ingreso_extra', 'pago_deuda', 'nota'],
   Deudas: ['nombre', 'saldo', 'tasa', 'minimo', 'nota'],
+  Sugerencias: ['nivel3', 'nivel1', 'nivel2', 'ambito', 'motivo', 'confianza'],
 };
 const NO_GASTO = ['Ingreso', 'Transferencia'];
 const SERIES_N1 = ['Fijos', 'Variables', 'Deuda', 'Negocio'];
@@ -69,6 +70,15 @@ async function cargar() {
   const q = Object.keys(TABS).map(t => 'ranges=' + t).join('&');
   let r;
   try {
+    // bases creadas con una versión anterior: agrega las pestañas que falten
+    const meta = await api(`/${sheetId}?fields=sheets.properties.title`);
+    const faltan = Object.keys(TABS).filter(t => !meta.sheets.some(s => s.properties.title === t));
+    if (faltan.length) {
+      await api(`/${sheetId}:batchUpdate`, { method: 'POST', body: JSON.stringify({
+        requests: faltan.map(title => ({ addSheet: { properties: { title, gridProperties: { frozenRowCount: 1 } } } })) }) });
+      await api(`/${sheetId}/values:batchUpdate`, { method: 'POST', body: JSON.stringify({
+        valueInputOption: 'RAW', data: faltan.map(t => ({ range: `${t}!A1`, values: [TABS[t]] })) }) });
+    }
     r = await api(`/${sheetId}/values:batchGet?${q}&valueRenderOption=UNFORMATTED_VALUE`);
   } catch (e) {
     // id malo o Sheet ajeno: olvidarlo para no fallar en cada recarga
@@ -82,6 +92,7 @@ async function cargar() {
     D[t] = filas.map((f, j) => Object.fromEntries([...h.map((k, c) => [k, f[c] ?? '']), ['_row', j + 2]]));
   });
   D.Movimientos.forEach(m => m.monto = +m.monto);
+  SUG = Object.fromEntries(D.Sugerencias.map(s => [s.nivel3, s]));
   $('#login').hidden = true;
   $('#tabs').hidden = false;
   estado(`${D.Movimientos.length} movimientos`);
@@ -168,7 +179,7 @@ function grafica(id, cfg) {
 // ---------- Movimientos ----------
 function pintarMovimientos() {
   const mes = $('#mMes').value, cta = $('#mCuenta').value, cat = $('#mCat').value, txt = $('#mTexto').value.toLowerCase();
-  const F = D.Movimientos.filter(m => (!mes || m.mes === mes) && (!cta || m.cuenta === cta) && (!cat || m.nivel2 === cat) &&
+  const F = D.Movimientos.filter(m => (!mes || m.mes === mes) && (!cta || m.cuenta === cta) && (!cat || (cat === SOLO_SUG ? sugDe(m) : m.nivel2 === cat)) &&
     (!txt || `${m.descripcion} ${m.nivel3} ${m.nota}`.toLowerCase().includes(txt)))
     .sort((a, b) => orden.dir * (orden.k === 'monto' ? a.monto - b.monto : String(a[orden.k]).localeCompare(String(b[orden.k]), 'es')) || b.fecha.localeCompare(a.fecha));
   const LIM = 400;
@@ -177,11 +188,20 @@ function pintarMovimientos() {
   const th = (k, t, cls = '') => `<th data-sort="${k}" class="${cls}" style="cursor:pointer">${t}${orden.k === k ? (orden.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
   $('#tMov').innerHTML = `<tr><th><input type="checkbox" id="selTodos" title="Seleccionar todos los visibles" ${visibles.length && visibles.every(m => sel.has(m.id)) ? 'checked' : ''}></th>` +
     th('fecha', 'Fecha') + th('cuenta', 'Cuenta') + th('nivel3', 'Comercio / destino') + th('monto', 'Monto', 'n') + th('nivel1', 'Nivel 1') +
-    th('nivel2', 'Nivel 2') + th('ambito', 'Ámbito') + th('nota', 'Nota') + '<th></th></tr>' + visibles.map(filaHTML).join('');
+    th('nivel2', 'Nivel 2') + th('ambito', 'Ámbito') + '<th>Sugerencia IA</th>' + th('nota', 'Nota') + '<th></th></tr>' + visibles.map(filaHTML).join('');
   pintarBulk();
 }
 
 let orden = { k: 'fecha', dir: -1 }, visibles = [];
+
+// sugerencias IA (pestaña Sugerencias, por comercio); se muestran solo si difieren de lo que ya tiene
+let SUG = {};
+const SOLO_SUG = '__sug__';
+const sugDe = m => { const s = SUG[m.nivel3]; return s && (s.nivel1 !== m.nivel1 || s.nivel2 !== m.nivel2 || s.ambito !== m.ambito) ? s : null; };
+async function aceptarSugerencias(lista) {
+  lista.forEach(m => { const s = sugDe(m); Object.assign(m, { nivel1: s.nivel1, nivel2: s.nivel2, ambito: s.ambito }); });
+  await guardarMovs(lista);
+}
 const sel = new Set();
 
 function pintarBulk() {
@@ -203,6 +223,8 @@ const filaHTML = m => `<tr data-id="${esc(m.id)}">
       <td>${desplegable('nivel1', m.nivel1)}</td>
       <td>${desplegable('nivel2', m.nivel2)}</td>
       <td>${desplegable('ambito', m.ambito)}</td>
+      <td>${sugDe(m) ? `<span title="${esc(sugDe(m).motivo)} · confianza ${esc(sugDe(m).confianza)}">${esc(sugDe(m).nivel2)}${sugDe(m).confianza === 'baja' ? ' <span class="muted">(?)</span>' : ''}</span>
+        <button class="btn sec" data-sug title="Aceptar sugerencia">✓</button>` : ''}</td>
       <td><input data-k="nota" value="${esc(m.nota)}"></td>
       <td><button class="btn sec" data-iguales title="Aplicar esta categoría a todos los movimientos de este comercio">a todos</button></td></tr>`;
 
@@ -216,7 +238,7 @@ const agregaOpcion = (k, v) => { if (!OPC[k].includes(v)) OPC[k] = [...OPC[k], v
 
 function listas() {
   const uniq = k => [...new Set(D.Movimientos.map(m => m[k]).filter(Boolean))].sort();
-  for (const k of ['nivel1', 'nivel2']) D.Presupuesto.forEach(p => p[k] && agregaOpcion(k, p[k]));
+  for (const k of ['nivel1', 'nivel2']) [...D.Presupuesto, ...D.Sugerencias].forEach(p => p[k] && agregaOpcion(k, p[k]));
   for (const k of Object.keys(OPC)) uniq(k).forEach(v => agregaOpcion(k, v));
   ['Personal', 'Medaunbrauni'].forEach(v => agregaOpcion('ambito', v));
   const opts = (sel, vals, todos, lbl = v => v) => { const v = $(sel).value; $(sel).innerHTML = `<option value="">${todos}</option>` + vals.map(x => `<option value="${esc(x)}">${esc(lbl(x))}</option>`).join(''); $(sel).value = v; };
@@ -224,7 +246,10 @@ function listas() {
   opts('#fPeriodo', ms, 'Todo el periodo', nombreMes);
   opts('#mMes', ms, 'Todos los meses', nombreMes);
   opts('#mCuenta', uniq('cuenta'), 'Todas las cuentas');
+  const cat = $('#mCat').value;
   opts('#mCat', uniq('nivel2'), 'Todas las categorías');
+  if (D.Sugerencias.length) $('#mCat').insertAdjacentHTML('beforeend', `<option value="${SOLO_SUG}">★ Con sugerencia IA</option>`);
+  $('#mCat').value = cat;
 }
 
 const filaMov = m => ['nivel1', 'nivel2', 'nivel3', 'ambito', 'msi', 'nota'].map(k => m[k]);
@@ -491,8 +516,20 @@ $('#bulkAplicar').onclick = conError(async () => {
   listas(); pintarMovimientos();
 });
 $('#bulkQuitar').onclick = () => { sel.clear(); pintarMovimientos(); };
+$('#bulkSug').onclick = conError(async () => {
+  const lista = D.Movimientos.filter(m => sel.has(m.id) && sugDe(m));
+  if (!lista.length) return alert('Ninguno de los seleccionados tiene sugerencia IA.');
+  await aceptarSugerencias(lista);
+  sel.clear(); listas(); pintarMovimientos();
+});
 
 $('#tMov').addEventListener('click', conError(async e => {
+  if (e.target.hasAttribute('data-sug')) {
+    const m = D.Movimientos.find(x => x.id === e.target.closest('tr').dataset.id);
+    await aceptarSugerencias([m]);
+    e.target.closest('tr').outerHTML = filaHTML(m);
+    return listas();
+  }
   if (!e.target.hasAttribute('data-iguales')) return;
   const m = D.Movimientos.find(x => x.id === e.target.closest('tr').dataset.id);
   const otros = D.Movimientos.filter(x => x !== m && x.nivel3 === m.nivel3 && (x.monto < 0) === (m.monto < 0));

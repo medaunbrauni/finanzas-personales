@@ -13,6 +13,7 @@ Los datos viven en un Google Sheet del usuario; este repo no contiene datos.
 | Presupuesto | nivel1, nivel2, monto |
 | Proyeccion | mes, ingreso_base, ingreso_extra, pago_deuda, nota |
 | Deudas | nombre, saldo, tasa, minimo, nota |
+| Sugerencias | nivel3, nivel1, nivel2, ambito, motivo, confianza (sugerencia IA por comercio; el usuario la acepta con ✓) |
 
 "Importar CSV" detecta la pestaña por los encabezados. Movimientos se agregan (los `id` repetidos se ignoran); las demás pestañas se reemplazan.
 
