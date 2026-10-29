@@ -226,7 +226,7 @@ const filaHTML = m => `<tr data-id="${esc(m.id)}">
       <td>${desplegable('ambito', m.ambito)}</td>
       <td>${sugDe(m) ? `<span title="${esc(sugDe(m).motivo)} · confianza ${esc(sugDe(m).confianza)}">${esc(sugDe(m).nivel2)}${sugDe(m).confianza === 'baja' ? ' <span class="muted">(?)</span>' : ''}</span>
         <button class="btn sec" data-sug title="Aceptar sugerencia">✓</button>` : ''}</td>
-      <td><input data-k="nota" value="${esc(m.nota)}"></td>
+      <td><input data-k="nota" value="${esc(m.nota)}" title="${esc(m.nota)}"></td>
       <td><button class="btn sec" data-iguales title="Aplicar esta categoría a todos los movimientos de este comercio">a todos</button></td></tr>`;
 
 // opciones de los desplegables de categoría; "+ Nueva…" agrega a estas listas
@@ -280,8 +280,24 @@ function parseCSV(t) {
 async function importar(file) {
   const [h, ...filas] = parseCSV((await file.text()).replace(/^﻿/, ''));
   const tab = Object.keys(TABS).find(t => TABS[t].join() === h.join());
-  if (!tab) return alert('El CSV no tiene las columnas de ninguna pestaña (' + h.join(', ') + ')');
   const objs = filas.map(f => Object.fromEntries(h.map((k, i) => [k, f[i] ?? ''])));
+  // CSV de cambios: id + algunas columnas de Movimientos → actualiza los existentes (la nota se agrega, no se pisa)
+  const EDITABLES = ['nivel1', 'nivel2', 'nivel3', 'ambito', 'nota'];
+  if (!tab && h[0] === 'id' && h.slice(1).every(k => EDITABLES.includes(k))) {
+    const porId = Object.fromEntries(D.Movimientos.map(m => [m.id, m]));
+    const lista = objs.filter(o => porId[o.id]).map(o => {
+      const m = porId[o.id];
+      for (const k of h.slice(1)) {
+        if (!o[k]) continue;
+        m[k] = k === 'nota' && m.nota && !m.nota.includes(o.nota) ? `${m.nota} · ${o.nota}` : k === 'nota' && m.nota ? m.nota : o[k];
+      }
+      return m;
+    });
+    if (!confirm(`Actualizar ${lista.length} movimientos (${objs.length - lista.length} no se encontraron)?`)) return;
+    await guardarMovs(lista);
+    return pintarTodo();
+  }
+  if (!tab) return alert('El CSV no tiene las columnas de ninguna pestaña (' + h.join(', ') + ')');
   if (tab !== 'Movimientos') {
     if (!confirm(`Esto reemplaza la pestaña ${tab} con ${objs.length} filas. ¿Seguir?`)) return;
     await reescribir(tab, objs);
