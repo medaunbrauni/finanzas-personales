@@ -178,10 +178,12 @@ function grafica(id, cfg) {
 }
 
 // ---------- Movimientos ----------
+// búsqueda sin acentos, mayúsculas ni signos (* - . /); todas las palabras deben aparecer, en cualquier orden
+const normaliza = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9ñ$]+/g, ' ').trim();
 function pintarMovimientos() {
-  const mes = $('#mMes').value, cta = $('#mCuenta').value, cat = $('#mCat').value, txt = $('#mTexto').value.toLowerCase();
+  const mes = $('#mMes').value, cta = $('#mCuenta').value, cat = $('#mCat').value, palabras = normaliza($('#mTexto').value).split(' ').filter(Boolean);
   const F = D.Movimientos.filter(m => (!mes || m.mes === mes) && (!cta || m.cuenta === cta) && (!cat || (cat === SOLO_SUG ? sugDe(m) : m.nivel2 === cat)) &&
-    (!txt || `${m.descripcion} ${m.nivel3} ${m.nota}`.toLowerCase().includes(txt)))
+    (!palabras.length || (t => palabras.every(w => t.includes(w)))(normaliza(`${m.nivel3} ${m.descripcion} ${m.nota} ${m.nivel1} ${m.nivel2} ${m.cuenta}`))))
     .sort((a, b) => orden.dir * (orden.k === 'monto' ? a.monto - b.monto : String(a[orden.k]).localeCompare(String(b[orden.k]), 'es')) || b.fecha.localeCompare(a.fecha));
   const LIM = 400;
   visibles = F.slice(0, LIM);
