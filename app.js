@@ -108,8 +108,9 @@ async function reescribir(t, filas) {
 const gastos = () => D.Movimientos.filter(m => !NO_GASTO.includes(m.nivel1));
 const meses = () => [...new Set(D.Movimientos.map(m => m.mes))].sort();
 const suma = (arr, f = m => m.monto) => arr.reduce((s, m) => s + f(m), 0);
-// el último mes suele venir incompleto (falta algún estado de cuenta) → los promedios usan los anteriores
-const mesesCompletos = n => meses().slice(0, -1).slice(-n);
+// el primer y el último mes vienen incompletos (los cortes de tarjeta no coinciden con el mes) → no entran a promedios
+const mesesCompletos = n => meses().slice(1, -1).slice(-n);
+const mesesPres = () => +(store('finanzas:mesesPres') || 3);
 function promedioMensual(filtro, n) {
   const ms = mesesCompletos(n);
   return ms.length ? suma(D.Movimientos.filter(m => ms.includes(m.mes) && filtro(m))) / ms.length : 0;
@@ -316,13 +317,19 @@ const totalPresupuesto = () => suma(D.Presupuesto.filter(p => p.nivel1 !== 'Deud
 // sin presupuesto capturado, el plan usa el gasto real promedio (sin intereses, que ya van en el pago a deudas)
 const gastoPlan = () => totalPresupuesto() || -promedioMensual(m => !NO_GASTO.includes(m.nivel1) && m.nivel1 !== 'Deuda', 3);
 
+const rangoPromedio = () => {
+  const ms = mesesCompletos(mesesPres());
+  return ms.length ? `${ms.length} meses (${nombreMes(ms[0])} – ${nombreMes(ms.at(-1))})${ms.length < mesesPres() ? ' · no hay más datos' : ''}` : '';
+};
+
 function pintarPresupuesto() {
+  $('#presMeses').value = mesesPres();
   const ult = mesesCompletos(1)[0];
   const filas = categoriasGasto().map(c => ({ ...c, pres: presDe(c.nivel2),
-    prom: -promedioMensual(m => m.nivel2 === c.nivel2, 3),
+    prom: -promedioMensual(m => m.nivel2 === c.nivel2, mesesPres()),
     ult: -suma(D.Movimientos.filter(m => m.mes === ult && m.nivel2 === c.nivel2)) }));
   const tot = k => fmt(suma(filas, f => f[k]));
-  $('#tPres').innerHTML = `<tr><th>Nivel 1</th><th>Categoría</th><th class="n">Presupuesto</th><th class="n">Promedio 3 meses</th><th class="n">${ult ? nombreMes(ult) : ''}</th><th style="width:25%">Uso del presupuesto</th></tr>` +
+  $('#tPres').innerHTML = `<tr><th>Nivel 1</th><th>Categoría</th><th class="n">Presupuesto</th><th class="n">Promedio ${rangoPromedio()}</th><th class="n">${ult ? nombreMes(ult) : ''}</th><th style="width:25%">Uso del presupuesto</th></tr>` +
     filas.map(f => {
       const pct = f.pres ? f.ult / f.pres : 0;
       return `<tr><td class="muted">${esc(f.nivel1)}</td><td>${esc(f.nivel2)}</td>
@@ -540,9 +547,10 @@ $('#tMov').addEventListener('click', conError(async e => {
   pintarMovimientos();
 }));
 
+$('#presMeses').onchange = e => { store('finanzas:mesesPres', e.target.value); pintarPresupuesto(); };
 $('#btnPromedios').onclick = () => {
   document.querySelectorAll('#tPres input').forEach(i => {
-    if (!i.value) { const p = -promedioMensual(m => m.nivel2 === i.dataset.n2, 3); if (p > 0) i.value = Math.round(p / 100) * 100; }
+    if (!i.value) { const p = -promedioMensual(m => m.nivel2 === i.dataset.n2, mesesPres()); if (p > 0) i.value = Math.round(p / 100) * 100; }
   });
 };
 $('#btnGuardarPres').onclick = conError(async () => {
