@@ -67,7 +67,16 @@ async function crearBase() {
 async function cargar() {
   estado('Cargando…');
   const q = Object.keys(TABS).map(t => 'ranges=' + t).join('&');
-  const r = await api(`/${sheetId}/values:batchGet?${q}&valueRenderOption=UNFORMATTED_VALUE`);
+  let r;
+  try {
+    r = await api(`/${sheetId}/values:batchGet?${q}&valueRenderOption=UNFORMATTED_VALUE`);
+  } catch (e) {
+    // id malo o Sheet ajeno: olvidarlo para no fallar en cada recarga
+    sheetId = null; store('finanzas:sheet', '');
+    $('#elegir').hidden = false; $('#btnLogin').hidden = true;
+    throw new Error('No pude abrir esa base. Usa "Crear base nueva" (o pega el link de un Google Sheet creado por esta app). Detalle: ' + e.message);
+  }
+  store('finanzas:sheet', sheetId);
   Object.keys(TABS).forEach((t, i) => {
     const [h = TABS[t], ...filas] = r.valueRanges[i].values || [];
     D[t] = filas.map((f, j) => Object.fromEntries([...h.map((k, c) => [k, f[c] ?? '']), ['_row', j + 2]]));
@@ -385,7 +394,7 @@ $('#btnCrear').onclick = conError(crearBase);
 $('#btnUsar').onclick = conError(async () => {
   const id = ($('#urlSheet').value.match(/\/d\/([\w-]+)/) || [])[1] || $('#urlSheet').value.trim();
   if (!id) return;
-  sheetId = id; store('finanzas:sheet', id); await cargar();
+  sheetId = id; await cargar();
 });
 
 ['#fPeriodo', '#fAmbito'].forEach(s => $(s).onchange = pintarResumen);
