@@ -122,9 +122,10 @@ function pintarResumen() {
   // promedio mensual: últimos N meses completos, todo dividido entre N
   const prom = $('#fProm').checked, msProm = prom ? mesesCompletos(+$('#fPromN').value) : [];
   $('#fPeriodo').disabled = prom;
-  const per = prom ? '' : $('#fPeriodo').value, amb = $('#fAmbito').value;
+  const per = prom ? '' : $('#fPeriodo').value, amb = $('#fAmbito').value, cta = $('#fCuenta').value;
+  const enCuenta = m => !cta || (cta.endsWith('*') ? m.cuenta.startsWith(cta.slice(0, -1)) : m.cuenta === cta);
   const div = prom ? msProm.length || 1 : 1;
-  const M = D.Movimientos.filter(m => (prom ? msProm.includes(m.mes) : !per || m.mes === per) && (!amb || m.ambito === amb));
+  const M = D.Movimientos.filter(m => (prom ? msProm.includes(m.mes) : !per || m.mes === per) && (!amb || m.ambito === amb) && enCuenta(m));
   const G = M.filter(m => !NO_GASTO.includes(m.nivel1));
   const ing = suma(M.filter(m => m.nivel1 === 'Ingreso')) / div;
   const extra = suma(M.filter(m => m.nivel2 === 'Extraordinario')) / div;
@@ -140,7 +141,7 @@ function pintarResumen() {
 
   // gasto por mes, apilado por nivel 1
   const ms = meses();
-  const GA = gastos().filter(m => !amb || m.ambito === amb);
+  const GA = gastos().filter(m => (!amb || m.ambito === amb) && enCuenta(m));
   const n1 = m => SERIES_N1.includes(m.nivel1) ? m.nivel1 : 'Otros';
   const series = [...SERIES_N1, 'Otros'].filter(s => GA.some(m => n1(m) === s));
   grafica('gMeses', {
@@ -252,6 +253,9 @@ function listas() {
   const opts = (sel, vals, todos, lbl = v => v) => { const v = $(sel).value; $(sel).innerHTML = `<option value="">${todos}</option>` + vals.map(x => `<option value="${esc(x)}">${esc(lbl(x))}</option>`).join(''); $(sel).value = v; };
   const ms = meses().reverse();
   opts('#fPeriodo', ms, 'Todo el periodo', nombreMes);
+  // grupos primero (todas las TC Banorte), luego cada cuenta
+  const cuentas = uniq('cuenta'), grupos = [...new Set(cuentas.filter(c => /\d{4}$/.test(c)).map(c => c.replace(/ \d{4}$/, '') + ' *'))];
+  opts('#fCuenta', [...grupos, ...cuentas], 'Todas las cuentas', c => c.endsWith(' *') ? c.slice(0, -2) + ' (todas)' : c);
   opts('#mMes', ms, 'Todos los meses', nombreMes);
   opts('#mCuenta', uniq('cuenta'), 'Todas las cuentas');
   const cat = $('#mCat').value;
@@ -482,7 +486,7 @@ $('#btnUsar').onclick = conError(async () => {
   sheetId = id; await cargar();
 });
 
-['#fPeriodo', '#fAmbito'].forEach(s => $(s).onchange = pintarResumen);
+['#fPeriodo', '#fAmbito', '#fCuenta'].forEach(s => $(s).onchange = pintarResumen);
 try { const g = JSON.parse(localStorage.getItem('finanzas:prom')); if (g) { $('#fProm').checked = g.on; $('#fPromN').value = g.n; } } catch {}
 ['#fProm', '#fPromN'].forEach(s => $(s).onchange = () => {
   store('finanzas:prom', JSON.stringify({ on: $('#fProm').checked, n: $('#fPromN').value }));
