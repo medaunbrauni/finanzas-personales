@@ -170,14 +170,33 @@ function pintarMovimientos() {
   const mes = $('#mMes').value, cta = $('#mCuenta').value, cat = $('#mCat').value, txt = $('#mTexto').value.toLowerCase();
   const F = D.Movimientos.filter(m => (!mes || m.mes === mes) && (!cta || m.cuenta === cta) && (!cat || m.nivel2 === cat) &&
     (!txt || `${m.descripcion} ${m.nivel3} ${m.nota}`.toLowerCase().includes(txt)))
-    .sort((a, b) => b.fecha.localeCompare(a.fecha));
+    .sort((a, b) => orden.dir * (orden.k === 'monto' ? a.monto - b.monto : String(a[orden.k]).localeCompare(String(b[orden.k]), 'es')) || b.fecha.localeCompare(a.fecha));
   const LIM = 400;
-  $('#mInfo').textContent = `${F.length} movimientos · neto ${fmt(suma(F))}` + (F.length > LIM ? ` · se muestran los ${LIM} más recientes, filtra para ver más` : '');
-  $('#tMov').innerHTML = '<tr><th>Fecha</th><th>Cuenta</th><th>Comercio / destino</th><th class="n">Monto</th><th>Nivel 1</th><th>Nivel 2</th><th>Ámbito</th><th>Nota</th><th></th></tr>' +
-    F.slice(0, LIM).map(filaHTML).join('');
+  visibles = F.slice(0, LIM);
+  $('#mInfo').textContent = `${F.length} movimientos · neto ${fmt(suma(F))}` + (F.length > LIM ? ` · se muestran los primeros ${LIM}, filtra para ver más` : '');
+  const th = (k, t, cls = '') => `<th data-sort="${k}" class="${cls}" style="cursor:pointer">${t}${orden.k === k ? (orden.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+  $('#tMov').innerHTML = `<tr><th><input type="checkbox" id="selTodos" title="Seleccionar todos los visibles" ${visibles.length && visibles.every(m => sel.has(m.id)) ? 'checked' : ''}></th>` +
+    th('fecha', 'Fecha') + th('cuenta', 'Cuenta') + th('nivel3', 'Comercio / destino') + th('monto', 'Monto', 'n') + th('nivel1', 'Nivel 1') +
+    th('nivel2', 'Nivel 2') + th('ambito', 'Ámbito') + th('nota', 'Nota') + '<th></th></tr>' + visibles.map(filaHTML).join('');
+  pintarBulk();
+}
+
+let orden = { k: 'fecha', dir: -1 }, visibles = [];
+const sel = new Set();
+
+function pintarBulk() {
+  $('#bulk').hidden = !sel.size;
+  $('#bulkN').textContent = `${sel.size} seleccionado${sel.size === 1 ? '' : 's'}`;
+  for (const k of Object.keys(OPC)) {
+    const s = $('#b_' + k), v = s.value;
+    s.innerHTML = `<option value="">${k === 'ambito' ? 'Ámbito' : 'Nivel ' + k.slice(-1)}: sin cambio</option>` +
+      OPC[k].map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join('') + `<option value="${NUEVA}">+ Nueva…</option>`;
+    s.value = OPC[k].includes(v) ? v : '';
+  }
 }
 
 const filaHTML = m => `<tr data-id="${esc(m.id)}">
+      <td><input type="checkbox" data-sel ${sel.has(m.id) ? 'checked' : ''}></td>
       <td>${esc(m.fecha)}</td><td class="muted">${esc(m.cuenta)}</td>
       <td title="${esc(m.descripcion)}"><input data-k="nivel3" value="${esc(m.nivel3)}"></td>
       <td class="n ${m.monto < 0 ? '' : 'pos'}">${fmt(m.monto)}${m.msi ? ` <span class="muted">${esc(m.msi)}</span>` : ''}</td>
@@ -414,6 +433,16 @@ $('#mTexto').oninput = pintarMovimientos;
 $('#fileCsv').onchange = conError(async e => { if (e.target.files[0]) await importar(e.target.files[0]); e.target.value = ''; });
 
 $('#tMov').addEventListener('change', conError(async e => {
+  if (e.target.id === 'selTodos') {
+    visibles.forEach(m => e.target.checked ? sel.add(m.id) : sel.delete(m.id));
+    document.querySelectorAll('#tMov [data-sel]').forEach(c => c.checked = e.target.checked);
+    return pintarBulk();
+  }
+  if (e.target.hasAttribute('data-sel')) {
+    const id = e.target.closest('tr').dataset.id;
+    e.target.checked ? sel.add(id) : sel.delete(id);
+    return pintarBulk();
+  }
   const m = D.Movimientos.find(x => x.id === e.target.closest('tr').dataset.id);
   const k = e.target.dataset.k;
   let v = e.target.value.trim();
@@ -433,6 +462,36 @@ $('#tMov').addEventListener('change', conError(async e => {
   await guardarMovs([m]);
   if (k !== 'nota') listas();
 }));
+$('#tMov').addEventListener('click', e => {
+  const k = e.target.closest('th[data-sort]')?.dataset.sort;
+  if (!k) return;
+  orden = { k, dir: orden.k === k ? -orden.dir : (k === 'fecha' || k === 'monto' ? -1 : 1) };
+  pintarMovimientos();
+});
+
+// cambio en bulk
+['nivel1', 'nivel2', 'ambito'].forEach(k => $('#b_' + k).onchange = e => {
+  if (e.target.value !== NUEVA) return;
+  const v = (prompt('Nombre de la nueva opción:') || '').trim();
+  if (v) { agregaOpcion(k, v); pintarBulk(); }
+  e.target.value = v;
+});
+$('#bulkAplicar').onclick = conError(async () => {
+  const cambio = Object.fromEntries(['nivel1', 'nivel2', 'ambito'].map(k => [k, $('#b_' + k).value]).filter(([, v]) => v));
+  if (!Object.keys(cambio).length) return alert('Elige al menos un nivel o ámbito para cambiar.');
+  if (cambio.nivel2 && !cambio.nivel1) {
+    const n1 = (D.Movimientos.find(x => x.nivel2 === cambio.nivel2 && !sel.has(x.id)) || D.Presupuesto.find(p => p.nivel2 === cambio.nivel2))?.nivel1;
+    if (n1) cambio.nivel1 = n1;
+  }
+  const lista = D.Movimientos.filter(m => sel.has(m.id));
+  lista.forEach(m => Object.assign(m, cambio));
+  await guardarMovs(lista);
+  sel.clear();
+  ['nivel1', 'nivel2', 'ambito'].forEach(k => $('#b_' + k).value = '');
+  listas(); pintarMovimientos();
+});
+$('#bulkQuitar').onclick = () => { sel.clear(); pintarMovimientos(); };
+
 $('#tMov').addEventListener('click', conError(async e => {
   if (!e.target.hasAttribute('data-iguales')) return;
   const m = D.Movimientos.find(x => x.id === e.target.closest('tr').dataset.id);

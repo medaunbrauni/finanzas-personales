@@ -56,6 +56,7 @@ th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; b
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 td input, td select { width: 100%; min-width: 90px; padding: 3px 6px; }
 td select { min-width: 130px; }
+td input[type="checkbox"] { width: auto; min-width: 0; }
 td input.num { text-align: right; min-width: 100px; }
 .neg { color: var(--critical); } .pos { color: var(--good); }
 .muted { color: var(--text-muted); }
@@ -111,6 +112,14 @@ td input.num { text-align: right; min-width: 100px; }
         <select id="mCat"></select>
         <input id="mTexto" placeholder="Buscar…">
         <label style="margin-left:auto" class="btn sec" role="button" tabindex="0">Importar CSV <input type="file" id="fileCsv" accept=".csv" hidden></label>
+      </div>
+      <div class="fila aviso" id="bulk" hidden>
+        <b id="bulkN"></b>
+        <select id="b_nivel1"></select>
+        <select id="b_nivel2"></select>
+        <select id="b_ambito"></select>
+        <button class="btn" id="bulkAplicar">Aplicar a seleccionados</button>
+        <button class="btn sec" id="bulkQuitar">Quitar selección</button>
       </div>
       <p class="muted" id="mInfo"></p>
       <div class="tabla" style="max-height:70vh"><table id="tMov"></table></div>
