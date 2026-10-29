@@ -174,7 +174,10 @@ function pintarMovimientos() {
   const LIM = 400;
   $('#mInfo').textContent = `${F.length} movimientos · neto ${fmt(suma(F))}` + (F.length > LIM ? ` · se muestran los ${LIM} más recientes, filtra para ver más` : '');
   $('#tMov').innerHTML = '<tr><th>Fecha</th><th>Cuenta</th><th>Comercio / destino</th><th class="n">Monto</th><th>Nivel 1</th><th>Nivel 2</th><th>Ámbito</th><th>Nota</th><th></th></tr>' +
-    F.slice(0, LIM).map(m => `<tr data-id="${esc(m.id)}">
+    F.slice(0, LIM).map(filaHTML).join('');
+}
+
+const filaHTML = m => `<tr data-id="${esc(m.id)}">
       <td>${esc(m.fecha)}</td><td class="muted">${esc(m.cuenta)}</td>
       <td title="${esc(m.descripcion)}"><input data-k="nivel3" value="${esc(m.nivel3)}"></td>
       <td class="n ${m.monto < 0 ? '' : 'pos'}">${fmt(m.monto)}${m.msi ? ` <span class="muted">${esc(m.msi)}</span>` : ''}</td>
@@ -182,8 +185,7 @@ function pintarMovimientos() {
       <td>${desplegable('nivel2', m.nivel2)}</td>
       <td>${desplegable('ambito', m.ambito)}</td>
       <td><input data-k="nota" value="${esc(m.nota)}"></td>
-      <td><button class="btn sec" data-iguales title="Aplicar esta categoría a todos los movimientos de este comercio">a todos</button></td></tr>`).join('');
-}
+      <td><button class="btn sec" data-iguales title="Aplicar esta categoría a todos los movimientos de este comercio">a todos</button></td></tr>`;
 
 // opciones de los desplegables de categoría; "+ Nueva…" agrega a estas listas
 const OPC = { nivel1: [], nivel2: [], ambito: [] };
@@ -426,8 +428,10 @@ $('#tMov').addEventListener('change', conError(async e => {
     const n1 = (D.Movimientos.find(x => x !== m && x.nivel2 === v) || D.Presupuesto.find(p => p.nivel2 === v))?.nivel1;
     if (n1) m.nivel1 = n1;
   }
+  // solo se redibuja la fila: si se redibuja la tabla, el filtro la esconde antes de poder darle "a todos"
+  e.target.closest('tr').outerHTML = filaHTML(m);
   await guardarMovs([m]);
-  if (k !== 'nota') { listas(); pintarMovimientos(); }
+  if (k !== 'nota') listas();
 }));
 $('#tMov').addEventListener('click', conError(async e => {
   if (!e.target.hasAttribute('data-iguales')) return;
