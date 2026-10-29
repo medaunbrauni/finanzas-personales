@@ -178,17 +178,26 @@ function pintarMovimientos() {
       <td>${esc(m.fecha)}</td><td class="muted">${esc(m.cuenta)}</td>
       <td title="${esc(m.descripcion)}"><input data-k="nivel3" value="${esc(m.nivel3)}"></td>
       <td class="n ${m.monto < 0 ? '' : 'pos'}">${fmt(m.monto)}${m.msi ? ` <span class="muted">${esc(m.msi)}</span>` : ''}</td>
-      <td><input data-k="nivel1" list="dl1" value="${esc(m.nivel1)}"></td>
-      <td><input data-k="nivel2" list="dl2" value="${esc(m.nivel2)}"></td>
-      <td><input data-k="ambito" list="dlA" value="${esc(m.ambito)}"></td>
+      <td>${desplegable('nivel1', m.nivel1)}</td>
+      <td>${desplegable('nivel2', m.nivel2)}</td>
+      <td>${desplegable('ambito', m.ambito)}</td>
       <td><input data-k="nota" value="${esc(m.nota)}"></td>
       <td><button class="btn sec" data-iguales title="Aplicar esta categoría a todos los movimientos de este comercio">a todos</button></td></tr>`).join('');
 }
 
+// opciones de los desplegables de categoría; "+ Nueva…" agrega a estas listas
+const OPC = { nivel1: [], nivel2: [], ambito: [] };
+const NUEVA = '__nueva__';
+const desplegable = (k, v) => `<select data-k="${k}">` +
+  [...new Set([...OPC[k], v].filter(Boolean))].map(x => `<option value="${esc(x)}"${x === v ? ' selected' : ''}>${esc(x)}</option>`).join('') +
+  `<option value="${NUEVA}">+ Nueva…</option></select>`;
+const agregaOpcion = (k, v) => { if (!OPC[k].includes(v)) OPC[k] = [...OPC[k], v].sort((a, b) => a.localeCompare(b)); };
+
 function listas() {
   const uniq = k => [...new Set(D.Movimientos.map(m => m[k]).filter(Boolean))].sort();
-  const dl = (id, vals) => { let e = document.getElementById(id); if (!e) { e = document.createElement('datalist'); e.id = id; document.body.append(e); } e.innerHTML = vals.map(v => `<option value="${esc(v)}">`).join(''); };
-  dl('dl1', uniq('nivel1')); dl('dl2', uniq('nivel2')); dl('dlA', ['Personal', 'Medaunbrauni']);
+  for (const k of ['nivel1', 'nivel2']) D.Presupuesto.forEach(p => p[k] && agregaOpcion(k, p[k]));
+  for (const k of Object.keys(OPC)) uniq(k).forEach(v => agregaOpcion(k, v));
+  ['Personal', 'Medaunbrauni'].forEach(v => agregaOpcion('ambito', v));
   const opts = (sel, vals, todos, lbl = v => v) => { const v = $(sel).value; $(sel).innerHTML = `<option value="">${todos}</option>` + vals.map(x => `<option value="${esc(x)}">${esc(lbl(x))}</option>`).join(''); $(sel).value = v; };
   const ms = meses().reverse();
   opts('#fPeriodo', ms, 'Todo el periodo', nombreMes);
@@ -404,8 +413,21 @@ $('#fileCsv').onchange = conError(async e => { if (e.target.files[0]) await impo
 
 $('#tMov').addEventListener('change', conError(async e => {
   const m = D.Movimientos.find(x => x.id === e.target.closest('tr').dataset.id);
-  m[e.target.dataset.k] = e.target.value.trim();
+  const k = e.target.dataset.k;
+  let v = e.target.value.trim();
+  if (v === NUEVA) {
+    v = (prompt(`Nombre de la nueva opción (${k === 'ambito' ? 'ámbito' : k.replace('nivel', 'nivel ')}):`) || '').trim();
+    if (!v) { e.target.value = m[k]; return; }
+    agregaOpcion(k, v);
+  }
+  m[k] = v;
+  // al elegir categoría, el nivel 1 se acomoda solo según cómo ya está clasificada en otros movimientos
+  if (k === 'nivel2') {
+    const n1 = (D.Movimientos.find(x => x !== m && x.nivel2 === v) || D.Presupuesto.find(p => p.nivel2 === v))?.nivel1;
+    if (n1) m.nivel1 = n1;
+  }
   await guardarMovs([m]);
+  if (k !== 'nota') { listas(); pintarMovimientos(); }
 }));
 $('#tMov').addEventListener('click', conError(async e => {
   if (!e.target.hasAttribute('data-iguales')) return;
