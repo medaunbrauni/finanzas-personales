@@ -569,6 +569,11 @@ $('#btnPromedios').onclick = () => {
     if (!i.value) { const p = -promedioMensual(m => m.nivel2 === i.dataset.n2, mesesPres()); if (p > 0) i.value = Math.round(p / 100) * 100; }
   });
 };
+// solo limpia la pantalla; se borra del Sheet hasta darle Guardar
+$('#btnBorrarPres').onclick = () => {
+  if (!confirm('¿Borrar todos los montos del presupuesto? (Se borra del Sheet hasta que le des Guardar)')) return;
+  D.Presupuesto = []; pintarPresupuesto(); pintarPlan();
+};
 $('#btnGuardarPres').onclick = conError(async () => {
   leerPresupuesto(); await reescribir('Presupuesto', D.Presupuesto); estado('Presupuesto guardado ✓'); pintarPresupuesto(); pintarPlan();
 });
