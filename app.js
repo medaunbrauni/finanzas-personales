@@ -161,15 +161,47 @@ function pintarResumen() {
   grafica('gCat', {
     type: 'bar',
     data: { labels: porCat.map(c => c[0]), datasets: [{ label: 'Gasto', data: porCat.map(c => -c[1] / div), backgroundColor: css('--series-1'), borderRadius: 4, borderSkipped: 'start' }] },
-    options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { ticks: { callback: fmt } }, y: { grid: { display: false } } } },
+    options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { ticks: { callback: fmt } }, y: { grid: { display: false } } },
+      onClick: (_, els) => { if (els[0]) { catDet = porCat[els[0].index][0]; pintarResumen(); $('#detalle').scrollIntoView({ behavior: 'smooth' }); } },
+      onHover: (e, els) => e.native.target.style.cursor = els[0] ? 'pointer' : 'default' },
   });
+  pintarDetalle(G, div, porCat.map(c => c[0]));
 
   const top = Object.values(G.reduce((acc, m) => {
-    const a = acc[m.nivel3] ||= { n3: m.nivel3, n2: m.nivel2, veces: 0, total: 0 };
+    const a = acc[destino(m)] ||= { n3: destino(m), n2: m.nivel2, veces: 0, total: 0 };
     a.veces++; a.total -= m.monto; return acc;
   }, {})).sort((a, b) => b.total - a.total).slice(0, 15);
   $('#tTop').innerHTML = `<tr><th>Comercio / destino</th><th>Categoría</th><th class="n">Veces${prom ? ' al mes' : ''}</th><th class="n">${prom ? 'Al mes' : 'Total'}</th></tr>` +
     top.map(t => `<tr><td>${esc(t.n3)}</td><td>${esc(t.n2)}</td><td class="n">${+(t.veces / div).toFixed(1)}</td><td class="n">${fmt(t.total / div)}</td></tr>`).join('');
+}
+
+// ---------- Desglose de una categoría ----------
+let catDet = null;
+// agrupa por destino: sin folios/fechas y juntando lo que se pagó vía Lega/Integrex
+const destino = m => /vía intermediario/.test(m.nota) ? 'Vía Lega / Integrex' : (m.nivel3 || '').replace(/\$[\d,]+(\.\d\d)?( MXN)?|\b\d{4,}\b/g, '').replace(/ de tu cuenta.*$/i, '').replace(/\s+/g, ' ').trim() || '(sin nombre)';
+
+function pintarDetalle(G, div, cats) {
+  if (!cats.includes(catDet)) catDet = cats[0];
+  $('#fCatDet').innerHTML = cats.map(c => `<option${c === catDet ? ' selected' : ''}>${esc(c)}</option>`).join('');
+  const X = G.filter(m => m.nivel2 === catDet);
+  const total = -suma(X) / div;
+  const grupos = Object.values(X.reduce((a, m) => {
+    const k = destino(m), g = a[k] ||= { k, veces: 0, total: 0, ej: m.descripcion };
+    g.veces++; g.total -= m.monto / div; return a;
+  }, {})).sort((a, b) => b.total - a.total);
+  const TOP = 10, top = grupos.slice(0, TOP), resto = grupos.slice(TOP);
+  const barras = resto.length ? [...top, { k: `Otros (${resto.length})`, total: suma(resto, g => g.total) }] : top;
+  $('#detTotal').textContent = `${fmt(total)}${div > 1 ? ' al mes' : ''} · ${X.length} movimientos`;
+  $('#gDetWrap').style.height = Math.max(160, barras.length * 30 + 40) + 'px';
+  grafica('gDet', {
+    type: 'bar',
+    data: { labels: barras.map(g => g.k.length > 45 ? g.k.slice(0, 44) + '…' : g.k), datasets: [{ label: catDet, data: barras.map(g => g.total), backgroundColor: css('--series-2'), borderRadius: 4, borderSkipped: 'start' }] },
+    options: { indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${fmt(c.parsed.x)} · ${Math.round(c.parsed.x / (total || 1) * 100)}%` } } },
+      scales: { x: { ticks: { callback: fmt } }, y: { grid: { display: false } } } },
+  });
+  $('#tDet').innerHTML = `<tr><th>Destino / comercio</th><th class="n">Veces${div > 1 ? ' al mes' : ''}</th><th class="n">${div > 1 ? 'Al mes' : 'Total'}</th><th class="n">%</th><th>Ejemplo del estado de cuenta</th></tr>` +
+    grupos.map(g => `<tr><td>${esc(g.k)}</td><td class="n">${+(g.veces / div).toFixed(1)}</td><td class="n">${fmt(g.total)}</td>
+      <td class="n">${Math.round(g.total / (total || 1) * 100)}%</td><td class="muted" title="${esc(g.ej)}">${esc(g.ej.slice(0, 60))}</td></tr>`).join('');
 }
 
 const agrupa = (arr, key) => Object.entries(arr.reduce((a, m) => (a[key(m)] = (a[key(m)] || 0) + m.monto, a), {}));
@@ -360,7 +392,7 @@ function pintarPresupuesto() {
     filas.map(f => {
       const pct = f.pres ? f.ult / f.pres : 0;
       return `<tr><td class="muted">${esc(f.nivel1)}</td><td>${esc(f.nivel2)}</td>
-      <td class="n"><input class="num" inputmode="decimal" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${f.pres ? fmt(f.pres) : ''}"></td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${fmtIn(f.pres || '')}"></td>
       <td class="n">${fmt(f.prom)}</td><td class="n">${fmt(f.ult)}</td>
       <td>${f.pres ? `<div class="barra ${pct > 1 ? 'sobre' : ''}" style="width:${Math.min(100, pct * 100)}%" title="${Math.round(pct * 100)}%"></div>` : ''}</td></tr>`;
     }).join('') + `<tr><th></th><th>Total</th><th class="n">${tot('pres')}</th><th class="n">${tot('prom')}</th><th class="n">${tot('ult')}</th><th></th></tr>`;
@@ -368,6 +400,7 @@ function pintarPresupuesto() {
 
 // los montos se ven como moneda ($1,234) y se editan como número
 const aNumero = v => +String(v).replace(/[^0-9.]/g, '') || 0;
+const fmtIn = n => n === '' || n == null ? '' : (+n).toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 2 });
 
 function leerPresupuesto() {
   D.Presupuesto = [...document.querySelectorAll('#tPres input')].filter(i => aNumero(i.value) > 0)
@@ -411,18 +444,18 @@ function pintarPlan() {
 
   $('#tProy').innerHTML = `<tr><th>Mes</th><th class="n">Ingreso base</th><th class="n">Ingreso extra</th><th class="n">Gastos (${totalPresupuesto() ? 'presupuesto' : 'promedio real'})</th><th class="n">Disponible</th><th class="n">Pago a deudas</th><th class="n">Deuda al cierre</th><th>Nota</th></tr>` +
     P.map((p, i) => `<tr data-mes="${p.mes}"><td>${nombreMes(p.mes)}</td>
-      <td class="n"><input class="num" type="number" step="1000" data-k="ingreso_base" placeholder="${Math.round(p.prom)}" value="${p.ingreso_base ?? ''}"></td>
-      <td class="n"><input class="num" type="number" step="1000" data-k="ingreso_extra" value="${p.ingreso_extra ?? ''}"></td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-k="ingreso_base" placeholder="${fmt(p.prom)}" value="${fmtIn(p.ingreso_base)}"></td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-k="ingreso_extra" value="${fmtIn(p.ingreso_extra)}"></td>
       <td class="n">${fmt(p.gas)}</td><td class="n ${p.disponible < 0 ? 'neg' : ''}">${fmt(p.disponible)}</td>
-      <td class="n"><input class="num" type="number" step="1000" data-k="pago_deuda" placeholder="${Math.round(Math.max(0, p.disponible))}" value="${p.pago_deuda ?? ''}"></td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-k="pago_deuda" placeholder="${fmt(Math.max(0, p.disponible))}" value="${fmtIn(p.pago_deuda)}"></td>
       <td class="n">${av.meses[i] ? fmt(av.meses[i].total) : fmt(0)}</td>
       <td><input data-k="nota" value="${esc(p.nota)}"></td></tr>`).join('');
 
   $('#tDeudas').innerHTML = '<tr><th>Tarjeta</th><th class="n">Saldo</th><th class="n">Tasa anual %</th><th class="n">Pago mínimo</th><th class="n">Interés al mes (con IVA)</th><th>Nota</th></tr>' +
     D.Deudas.map((d, i) => `<tr data-i="${i}"><td><input data-k="nombre" value="${esc(d.nombre)}"></td>
-      <td class="n"><input class="num" type="number" data-k="saldo" value="${d.saldo}"></td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-k="saldo" value="${fmtIn(d.saldo)}"></td>
       <td class="n"><input class="num" type="number" step="0.01" data-k="tasa" value="${d.tasa}"></td>
-      <td class="n"><input class="num" type="number" data-k="minimo" value="${d.minimo}"></td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-k="minimo" value="${fmtIn(d.minimo)}"></td>
       <td class="n">${fmt(interesMensual(+d.saldo || 0, +d.tasa || 0))}</td>
       <td><input data-k="nota" value="${esc(d.nota)}"></td></tr>`).join('');
 
@@ -455,14 +488,14 @@ function pintarPlan() {
 function leerPlan() {
   const conf = [...document.querySelectorAll('#tProy tr[data-mes]')].map(tr => {
     const o = { mes: tr.dataset.mes };
-    tr.querySelectorAll('input').forEach(i => o[i.dataset.k] = i.type === 'number' && i.value !== '' ? +i.value : i.value);
+    tr.querySelectorAll('input').forEach(i => o[i.dataset.k] = i.value === '' ? '' : i.classList.contains('moneda') ? aNumero(i.value) : i.value);
     return o;
   });
   // conserva meses que ya no se muestran (pasados) tal cual
   D.Proyeccion = [...D.Proyeccion.filter(p => !conf.some(c => c.mes === p.mes)), ...conf]
     .filter(p => p.ingreso_base !== '' || p.ingreso_extra !== '' || p.pago_deuda !== '' || p.nota);
   D.Deudas = [...document.querySelectorAll('#tDeudas tr[data-i]')].map(tr => {
-    const o = {}; tr.querySelectorAll('input').forEach(i => o[i.dataset.k] = i.type === 'number' ? +i.value || 0 : i.value); return o;
+    const o = {}; tr.querySelectorAll('input').forEach(i => o[i.dataset.k] = i.classList.contains('moneda') ? aNumero(i.value) : i.type === 'number' ? +i.value || 0 : i.value); return o;
   }).filter(d => d.nombre);
 }
 
@@ -490,6 +523,7 @@ $('#btnUsar').onclick = conError(async () => {
 });
 
 ['#fPeriodo', '#fAmbito', '#fCuenta'].forEach(s => $(s).onchange = pintarResumen);
+$('#fCatDet').onchange = e => { catDet = e.target.value; pintarResumen(); };
 try { const g = JSON.parse(localStorage.getItem('finanzas:prom')); if (g) { $('#fProm').checked = g.on; $('#fPromN').value = g.n; } } catch {}
 ['#fProm', '#fPromN'].forEach(s => $(s).onchange = () => {
   store('finanzas:prom', JSON.stringify({ on: $('#fProm').checked, n: $('#fPromN').value }));
@@ -597,8 +631,8 @@ $('#btnGuardarPres').onclick = conError(async () => {
   leerPresupuesto(); await reescribir('Presupuesto', D.Presupuesto); estado('Presupuesto guardado ✓'); pintarPresupuesto(); pintarPlan();
 });
 $('#tPres').addEventListener('change', () => { leerPresupuesto(); pintarPresupuesto(); });
-$('#tPres').addEventListener('focusin', e => { if (e.target.matches('input')) { e.target.value = aNumero(e.target.value) || ''; e.target.select(); } });
-$('#tPres').addEventListener('focusout', e => { if (e.target.matches('input') && e.target.value) e.target.value = fmt(aNumero(e.target.value)); });
+document.addEventListener('focusin', e => { if (e.target.matches('input.moneda')) { e.target.value = e.target.value && aNumero(e.target.value); e.target.select(); } });
+document.addEventListener('focusout', e => { if (e.target.matches('input.moneda') && e.target.value) e.target.value = fmtIn(aNumero(e.target.value)); });
 
 $('#tProy').addEventListener('change', () => { leerPlan(); pintarPlan(); });
 $('#tDeudas').addEventListener('change', () => { leerPlan(); pintarPlan(); });

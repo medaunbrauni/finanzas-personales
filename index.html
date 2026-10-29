@@ -105,6 +105,12 @@ td input.num { text-align: right; min-width: 100px; }
     <div class="kpis" id="kpis"></div>
     <div class="card"><h2>Gasto por mes</h2><div class="graf"><canvas id="gMeses"></canvas></div></div>
     <div class="card"><h2>¿En qué se va el dinero?</h2><div class="graf" id="gCatWrap"><canvas id="gCat"></canvas></div></div>
+    <div class="card" id="detalle">
+      <h2>¿Qué compone <select id="fCatDet"></select>? <span class="muted" id="detTotal" style="font-weight:400"></span></h2>
+      <p class="muted">Tip: da clic en una barra de la gráfica de arriba para ver su desglose.</p>
+      <div class="graf" id="gDetWrap"><canvas id="gDet"></canvas></div>
+      <div class="tabla" style="max-height:50vh;margin-top:12px"><table id="tDet"></table></div>
+    </div>
     <div class="card"><h2>Top 15 comercios / destinos</h2><div class="tabla"><table id="tTop"></table></div></div>
   </section>
 
