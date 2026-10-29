@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finanzas Personales</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f4f2; --surface-1: #fcfcfb; --border: #e2e1dc;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
+  --accent: #2a78d6; --good: #008300; --critical: #e34948;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --accent: #3987e5; --good: #2fa52f; --critical: #e66767;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #111110; --surface-1: #1a1a19; --border: #2e2e2c;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --accent: #3987e5; --good: #2fa52f; --critical: #e66767;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px; background: var(--surface-1); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 16px; margin: 0; }
+nav { display: flex; gap: 4px; overflow-x: auto; max-width: 100%; }
+nav button { background: none; border: 0; padding: 6px 10px; border-radius: 6px; color: var(--text-secondary); cursor: pointer; font: inherit; }
+nav button[aria-current="true"] { background: var(--surface-0); color: var(--text-primary); font-weight: 600; }
+#estado { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+[hidden] { display: none !important; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 12px; }
+.fila { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+.kpi small { color: var(--text-secondary); display: block; }
+.kpi b { font-size: 22px; font-variant-numeric: tabular-nums; }
+button, select, input { font: inherit; color: var(--text-primary); }
+.btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+.sec { background: var(--surface-0); color: var(--text-primary); border: 1px solid var(--border); }
+select, input { background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+.tabla { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+td input { width: 100%; min-width: 90px; padding: 3px 6px; }
+td input.num { text-align: right; min-width: 100px; }
+.neg { color: var(--critical); } .pos { color: var(--good); }
+.muted { color: var(--text-muted); }
+.barra { height: 8px; border-radius: 4px; background: var(--accent); }
+.barra.sobre { background: var(--critical); }
+.graf { position: relative; height: 300px; }
+.aviso { padding: 10px 12px; border-radius: 8px; background: var(--surface-0); border: 1px solid var(--border); margin-bottom: 12px; }
+#login { text-align: center; padding: 48px 16px; }
+@media (max-width: 600px) { #estado { width: 100%; margin: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Finanzas Personales</h1>
+  <nav id="tabs" hidden>
+    <button data-v="resumen" aria-current="true">Resumen</button>
+    <button data-v="movimientos">Movimientos</button>
+    <button data-v="presupuesto">Presupuesto</button>
+    <button data-v="plan">Plan y deudas</button>
+  </nav>
+  <span id="estado"></span>
+</header>
+<main>
+  <section id="login" class="card">
+    <p>Tus datos viven en un Google Sheet de tu Drive. Esta página no guarda nada.</p>
+    <button class="btn" id="btnLogin">Entrar con Google</button>
+    <div id="elegir" hidden style="margin-top:16px">
+      <p>No encontré tu base en este navegador.</p>
+      <div class="fila" style="justify-content:center">
+        <button class="btn" id="btnCrear">Crear base nueva</button>
+        <input id="urlSheet" placeholder="o pega el link del Sheet" size="40">
+        <button class="btn sec" id="btnUsar">Usar</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="resumen" hidden>
+    <div class="fila">
+      <label>Periodo <select id="fPeriodo"></select></label>
+      <label>Ámbito <select id="fAmbito"><option value="">Todos</option><option>Personal</option><option>Medaunbrauni</option></select></label>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="card"><h2>Gasto por mes</h2><div class="graf"><canvas id="gMeses"></canvas></div></div>
+    <div class="card"><h2>¿En qué se va el dinero?</h2><div class="graf" id="gCatWrap"><canvas id="gCat"></canvas></div></div>
+    <div class="card"><h2>Top 15 comercios / destinos</h2><div class="tabla"><table id="tTop"></table></div></div>
+  </section>
+
+  <section id="movimientos" hidden>
+    <div class="card">
+      <div class="fila">
+        <select id="mMes"></select>
+        <select id="mCuenta"></select>
+        <select id="mCat"></select>
+        <input id="mTexto" placeholder="Buscar…">
+        <label style="margin-left:auto" class="btn sec" role="button" tabindex="0">Importar CSV <input type="file" id="fileCsv" accept=".csv" hidden></label>
+      </div>
+      <p class="muted" id="mInfo"></p>
+      <div class="tabla" style="max-height:70vh"><table id="tMov"></table></div>
+    </div>
+  </section>
+
+  <section id="presupuesto" hidden>
+    <div class="card">
+      <h2>Presupuesto mensual por categoría</h2>
+      <div class="fila">
+        <button class="btn sec" id="btnPromedios">Llenar vacíos con promedio de 3 meses</button>
+        <button class="btn" id="btnGuardarPres">Guardar</button>
+      </div>
+      <div class="tabla"><table id="tPres"></table></div>
+    </div>
+  </section>
+
+  <section id="plan" hidden>
+    <div class="kpis" id="kpisPlan"></div>
+    <div class="card">
+      <h2>Proyección por mes</h2>
+      <p class="muted">Si dejas "Pago a deudas" vacío, se usa todo lo disponible del mes. Gastos = tu presupuesto (sin Deuda); mientras no lo captures, se usa tu gasto promedio real.</p>
+      <div class="fila"><button class="btn" id="btnGuardarProy">Guardar proyección</button><button class="btn sec" id="btnMasMeses">+6 meses</button></div>
+      <div class="tabla"><table id="tProy"></table></div>
+    </div>
+    <div class="card">
+      <h2>Tarjetas</h2>
+      <div class="tabla"><table id="tDeudas"></table></div>
+      <div class="fila" style="margin-top:8px"><button class="btn sec" id="btnAddDeuda">+ Deuda</button><button class="btn" id="btnGuardarDeudas">Guardar tarjetas</button></div>
+    </div>
+    <div class="card"><h2>Saldo total proyectado</h2><div class="graf"><canvas id="gDeuda"></canvas></div><div class="tabla"><table id="tEstr"></table></div></div>
+  </section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
