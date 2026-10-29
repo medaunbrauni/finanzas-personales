@@ -119,16 +119,21 @@ const ingresoPromedio = () => promedioMensual(m => m.nivel1 === 'Ingreso' && m.n
 
 // ---------- Resumen ----------
 function pintarResumen() {
-  const per = $('#fPeriodo').value, amb = $('#fAmbito').value;
-  const M = D.Movimientos.filter(m => (!per || m.mes === per) && (!amb || m.ambito === amb));
+  // promedio mensual: últimos N meses completos, todo dividido entre N
+  const prom = $('#fProm').checked, msProm = prom ? mesesCompletos(+$('#fPromN').value) : [];
+  $('#fPeriodo').disabled = prom;
+  const per = prom ? '' : $('#fPeriodo').value, amb = $('#fAmbito').value;
+  const div = prom ? msProm.length || 1 : 1;
+  const M = D.Movimientos.filter(m => (prom ? msProm.includes(m.mes) : !per || m.mes === per) && (!amb || m.ambito === amb));
   const G = M.filter(m => !NO_GASTO.includes(m.nivel1));
-  const ing = suma(M.filter(m => m.nivel1 === 'Ingreso'));
-  const extra = suma(M.filter(m => m.nivel2 === 'Extraordinario'));
-  const gas = -suma(G), intereses = -suma(G.filter(m => m.nivel1 === 'Deuda'));
+  const ing = suma(M.filter(m => m.nivel1 === 'Ingreso')) / div;
+  const extra = suma(M.filter(m => m.nivel2 === 'Extraordinario')) / div;
+  const gas = -suma(G) / div, intereses = -suma(G.filter(m => m.nivel1 === 'Deuda')) / div;
   const nMeses = per ? 1 : meses().length;
+  $('#promInfo').textContent = prom && msProm.length ? `Promedio mensual de ${msProm.length} meses: ${nombreMes(msProm[0])} – ${nombreMes(msProm.at(-1))}` : '';
   $('#kpis').innerHTML = [
-    ['Ingresos', fmt(ing), extra ? `incluye ${fmt(extra)} extraordinario` : ''],
-    ['Gastos', fmt(gas), per ? '' : `${fmt(gas / nMeses)} al mes`],
+    ['Ingresos' + (prom ? ' al mes' : ''), fmt(ing), extra ? `incluye ${fmt(extra)} extraordinario` : ''],
+    ['Gastos' + (prom ? ' al mes' : ''), fmt(gas), per || prom ? '' : `${fmt(gas / nMeses)} al mes`],
     ['Intereses y comisiones', fmt(intereses), `${Math.round(intereses / (gas || 1) * 100)}% de tus gastos`],
     ['Balance', `<span class="${ing - gas < 0 ? 'neg' : 'pos'}">${fmt(ing - gas)}</span>`, ''],
   ].map(([t, v, s]) => `<div class="kpi"><small>${t}</small><b>${v}</b><small>${s}</small></div>`).join('');
@@ -154,7 +159,7 @@ function pintarResumen() {
   $('#gCatWrap').style.height = Math.max(200, porCat.length * 28 + 40) + 'px';
   grafica('gCat', {
     type: 'bar',
-    data: { labels: porCat.map(c => c[0]), datasets: [{ label: 'Gasto', data: porCat.map(c => -c[1]), backgroundColor: css('--series-1'), borderRadius: 4, borderSkipped: 'start' }] },
+    data: { labels: porCat.map(c => c[0]), datasets: [{ label: 'Gasto', data: porCat.map(c => -c[1] / div), backgroundColor: css('--series-1'), borderRadius: 4, borderSkipped: 'start' }] },
     options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { ticks: { callback: fmt } }, y: { grid: { display: false } } } },
   });
 
@@ -162,8 +167,8 @@ function pintarResumen() {
     const a = acc[m.nivel3] ||= { n3: m.nivel3, n2: m.nivel2, veces: 0, total: 0 };
     a.veces++; a.total -= m.monto; return acc;
   }, {})).sort((a, b) => b.total - a.total).slice(0, 15);
-  $('#tTop').innerHTML = '<tr><th>Comercio / destino</th><th>Categoría</th><th class="n">Veces</th><th class="n">Total</th></tr>' +
-    top.map(t => `<tr><td>${esc(t.n3)}</td><td>${esc(t.n2)}</td><td class="n">${t.veces}</td><td class="n">${fmt(t.total)}</td></tr>`).join('');
+  $('#tTop').innerHTML = `<tr><th>Comercio / destino</th><th>Categoría</th><th class="n">Veces${prom ? ' al mes' : ''}</th><th class="n">${prom ? 'Al mes' : 'Total'}</th></tr>` +
+    top.map(t => `<tr><td>${esc(t.n3)}</td><td>${esc(t.n2)}</td><td class="n">${+(t.veces / div).toFixed(1)}</td><td class="n">${fmt(t.total / div)}</td></tr>`).join('');
 }
 
 const agrupa = (arr, key) => Object.entries(arr.reduce((a, m) => (a[key(m)] = (a[key(m)] || 0) + m.monto, a), {}));
@@ -478,6 +483,11 @@ $('#btnUsar').onclick = conError(async () => {
 });
 
 ['#fPeriodo', '#fAmbito'].forEach(s => $(s).onchange = pintarResumen);
+try { const g = JSON.parse(localStorage.getItem('finanzas:prom')); if (g) { $('#fProm').checked = g.on; $('#fPromN').value = g.n; } } catch {}
+['#fProm', '#fPromN'].forEach(s => $(s).onchange = () => {
+  store('finanzas:prom', JSON.stringify({ on: $('#fProm').checked, n: $('#fPromN').value }));
+  pintarResumen();
+});
 ['#mMes', '#mCuenta', '#mCat'].forEach(s => $(s).onchange = pintarMovimientos);
 $('#mTexto').oninput = pintarMovimientos;
 $('#fileCsv').onchange = conError(async e => { if (e.target.files[0]) await importar(e.target.files[0]); e.target.value = ''; });
