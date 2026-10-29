@@ -360,15 +360,18 @@ function pintarPresupuesto() {
     filas.map(f => {
       const pct = f.pres ? f.ult / f.pres : 0;
       return `<tr><td class="muted">${esc(f.nivel1)}</td><td>${esc(f.nivel2)}</td>
-      <td class="n"><input class="num" type="number" step="100" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${f.pres || ''}"></td>
+      <td class="n"><input class="num" inputmode="decimal" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${f.pres ? fmt(f.pres) : ''}"></td>
       <td class="n">${fmt(f.prom)}</td><td class="n">${fmt(f.ult)}</td>
       <td>${f.pres ? `<div class="barra ${pct > 1 ? 'sobre' : ''}" style="width:${Math.min(100, pct * 100)}%" title="${Math.round(pct * 100)}%"></div>` : ''}</td></tr>`;
     }).join('') + `<tr><th></th><th>Total</th><th class="n">${tot('pres')}</th><th class="n">${tot('prom')}</th><th class="n">${tot('ult')}</th><th></th></tr>`;
 }
 
+// los montos se ven como moneda ($1,234) y se editan como número
+const aNumero = v => +String(v).replace(/[^0-9.]/g, '') || 0;
+
 function leerPresupuesto() {
-  D.Presupuesto = [...document.querySelectorAll('#tPres input')].filter(i => +i.value > 0)
-    .map(i => ({ nivel1: i.dataset.n1, nivel2: i.dataset.n2, monto: +i.value }));
+  D.Presupuesto = [...document.querySelectorAll('#tPres input')].filter(i => aNumero(i.value) > 0)
+    .map(i => ({ nivel1: i.dataset.n1, nivel2: i.dataset.n2, monto: aNumero(i.value) }));
 }
 
 // ---------- Plan y deudas ----------
@@ -582,7 +585,7 @@ $('#tMov').addEventListener('click', conError(async e => {
 $('#presMeses').onchange = e => { store('finanzas:mesesPres', e.target.value); pintarPresupuesto(); };
 $('#btnPromedios').onclick = () => {
   document.querySelectorAll('#tPres input').forEach(i => {
-    if (!i.value) { const p = -promedioMensual(m => m.nivel2 === i.dataset.n2, mesesPres()); if (p > 0) i.value = Math.round(p / 100) * 100; }
+    if (!i.value) { const p = -promedioMensual(m => m.nivel2 === i.dataset.n2, mesesPres()); if (p > 0) i.value = fmt(Math.round(p / 100) * 100); }
   });
 };
 // solo limpia la pantalla; se borra del Sheet hasta darle Guardar
@@ -594,6 +597,8 @@ $('#btnGuardarPres').onclick = conError(async () => {
   leerPresupuesto(); await reescribir('Presupuesto', D.Presupuesto); estado('Presupuesto guardado ✓'); pintarPresupuesto(); pintarPlan();
 });
 $('#tPres').addEventListener('change', () => { leerPresupuesto(); pintarPresupuesto(); });
+$('#tPres').addEventListener('focusin', e => { if (e.target.matches('input')) { e.target.value = aNumero(e.target.value) || ''; e.target.select(); } });
+$('#tPres').addEventListener('focusout', e => { if (e.target.matches('input') && e.target.value) e.target.value = fmt(aNumero(e.target.value)); });
 
 $('#tProy').addEventListener('change', () => { leerPlan(); pintarPlan(); });
 $('#tDeudas').addEventListener('change', () => { leerPlan(); pintarPlan(); });
