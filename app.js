@@ -4,7 +4,7 @@ const CLIENT_ID = '542473129173-6nmrt78rbotcqf2sl7qfjbrk6empbief.apps.googleuser
 const SCOPE = 'https://www.googleapis.com/auth/drive.file'; // solo ve los archivos que esta app crea
 const TABS = {
   Movimientos: ['id', 'fecha', 'mes', 'cuenta', 'descripcion', 'monto', 'nivel1', 'nivel2', 'nivel3', 'ambito', 'msi', 'nota'],
-  Presupuesto: ['nivel1', 'nivel2', 'monto'],
+  Presupuesto: ['nivel1', 'nivel2', 'monto', 'fijo'],
   Proyeccion: ['mes', 'ingreso_base', 'ingreso_extra', 'pago_deuda', 'nota'],
   Deudas: ['nombre', 'saldo', 'tasa', 'minimo', 'nota', 'saldo_inicial'],
   Sugerencias: ['nivel3', 'nivel1', 'nivel2', 'ambito', 'motivo', 'confianza'],
@@ -219,7 +219,7 @@ const punto = c => `<span class="dot" style="background:${colorDe(c)}"></span>`;
 // ---------- Semáforo del mes ----------
 function pintarSemaforo() {
   const mes = (!$('#fProm').checked && $('#fPeriodo').value) || meses().at(-1);
-  const cats = D.Presupuesto.filter(p => p.nivel1 !== 'Deuda' && +p.monto > 0);
+  const cats = D.Presupuesto.filter(p => !['Deuda', 'Ingreso'].includes(p.nivel1) && +p.monto > 0);
   const caja = $('#semaforo');
   caja.hidden = !mes;
   if (!mes) return;
@@ -449,7 +449,9 @@ function parseCSV(t) {
 
 async function importar(file) {
   const [h, ...filas] = parseCSV((await file.text()).replace(/^﻿/, ''));
-  const tab = Object.keys(TABS).find(t => TABS[t].join() === h.join());
+  // un CSV con menos columnas al final (p. ej. Presupuesto sin "fijo") también cuenta
+  const tab = Object.keys(TABS).find(t => TABS[t].join() === h.join()) ||
+    Object.keys(TABS).find(t => h.length >= 3 && h.length < TABS[t].length && TABS[t].slice(0, h.length).join() === h.join());
   const objs = filas.map(f => Object.fromEntries(h.map((k, i) => [k, f[i] ?? ''])));
   // CSV de cambios: id + algunas columnas de Movimientos → actualiza los existentes (la nota se agrega, no se pisa)
   const EDITABLES = ['nivel1', 'nivel2', 'nivel3', 'ambito', 'nota'];
@@ -496,11 +498,18 @@ async function importar(file) {
 function categoriasGasto() {
   const map = new Map();
   for (const m of gastos()) if (m.nivel1 !== 'Deuda') map.set(m.nivel2, m.nivel1);
-  for (const p of D.Presupuesto) if (p.nivel1 !== 'Deuda') map.set(p.nivel2, p.nivel1);
+  for (const p of D.Presupuesto) if (!['Deuda', 'Ingreso'].includes(p.nivel1)) map.set(p.nivel2, p.nivel1);
   return [...map].map(([nivel2, nivel1]) => ({ nivel1, nivel2 })).sort((a, b) => a.nivel1.localeCompare(b.nivel1) || a.nivel2.localeCompare(b.nivel2));
 }
-const presDe = n2 => +(D.Presupuesto.find(p => p.nivel2 === n2)?.monto || 0);
-const totalPresupuesto = () => suma(D.Presupuesto.filter(p => p.nivel1 !== 'Deuda'), p => +p.monto || 0);
+// una categoría puede llamarse igual como ingreso y como gasto (p. ej. Medaunbrauni): sin n1, solo gastos
+const presDe = (n2, n1) => +(D.Presupuesto.find(p => p.nivel2 === n2 && (n1 ? p.nivel1 === n1 : p.nivel1 !== 'Ingreso'))?.monto || 0);
+const totalPresupuesto = () => suma(D.Presupuesto.filter(p => !['Deuda', 'Ingreso'].includes(p.nivel1)), p => +p.monto || 0);
+// fijo: no se ajusta con el ingreso; si no lo has marcado, se toma por fijo lo de nivel 1 "Fijos"
+const esFijo = c => { const p = D.Presupuesto.find(x => x.nivel2 === c.nivel2 && x.nivel1 !== 'Ingreso'); return p && p.fijo !== '' && p.fijo != null ? String(p.fijo) === '1' : c.nivel1 === 'Fijos'; };
+// ingresos que planeas (renglones nivel 1 "Ingreso" del presupuesto); sin capturar, el promedio real
+const hayIngresoPlaneado = () => D.Presupuesto.some(p => p.nivel1 === 'Ingreso' && +p.monto);
+const ingresoPlaneado = () => suma(D.Presupuesto.filter(p => p.nivel1 === 'Ingreso'), p => +p.monto || 0) || ingresoPromedio();
+const redondea = n => Math.round(n / 100) * 100;
 // pago mensual a tarjetas que planeas: renglón Deuda / Pago a deudas del presupuesto
 const PAGO_DEUDA = 'Pago a deudas';
 const presDeuda = () => presDe(PAGO_DEUDA);
@@ -515,34 +524,65 @@ const rangoPromedio = () => {
 function pintarPresupuesto() {
   $('#presMeses').value = mesesPres();
   const ult = mesesCompletos(1)[0];
-  const filas = categoriasGasto().map(c => ({ ...c, pres: presDe(c.nivel2),
-    prom: -promedioMensual(m => m.nivel2 === c.nivel2, mesesPres()),
-    ult: -suma(analisis().filter(m => m.mes === ult && m.nivel2 === c.nivel2)) }));
+  const filas = filasPresupuesto(ult);
+  const aj = ajuste(filas);
+  filas.forEach(f => f.aj = aj.de(f));
   const tot = k => fmt(suma(filas, f => f[k]));
-  $('#tPres').innerHTML = `<tr><th>Nivel 1</th><th>Categoría</th><th class="n">Presupuesto</th><th class="n">Promedio ${rangoPromedio()}</th><th class="n">${ult ? nombreMes(ult) : ''}</th><th style="width:25%">Uso del presupuesto</th></tr>` +
+  $('#tPres').innerHTML = `<tr><th>Nivel 1</th><th>Categoría</th><th title="No se ajusta con el ingreso">Fijo</th><th class="n">Presupuesto</th><th class="n">Con tu ingreso</th><th class="n">Promedio ${rangoPromedio()}</th><th class="n">${ult ? nombreMes(ult) : ''}</th><th style="width:20%">Uso del presupuesto</th></tr>` +
     filas.map(f => {
       const pct = f.pres ? f.ult / f.pres : 0;
-      return `<tr><td class="muted">${esc(f.nivel1)}</td><td>${punto(f.nivel2)}${esc(f.nivel2)}</td>
+      return `<tr><td class="muted solo-pc">${esc(f.nivel1)}</td><td class="ancho">${punto(f.nivel2)}<b>${esc(f.nivel2)}</b></td>
+      <td data-l="Fijo"><input type="checkbox" data-fijo data-n2="${esc(f.nivel2)}" ${f.fijo ? 'checked' : ''}></td>
       <td class="n" data-l="Presupuesto"><input class="num moneda" inputmode="decimal" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${fmtIn(f.pres || '')}"></td>
+      <td class="n ${f.fijo ? 'muted' : f.aj < (f.pres || f.prom) ? 'neg' : 'pos'}" data-l="Con tu ingreso">${fmt(f.aj)}</td>
       <td class="n" data-l="Promedio">${fmt(f.prom)}</td><td class="n" data-l="${ult ? nombreMes(ult) : ''}">${fmt(f.ult)}</td>
       <td class="ancho">${f.pres ? `<div class="barra ${pct > 1 ? 'sobre' : ''}" style="width:${Math.min(100, pct * 100)}%" title="${Math.round(pct * 100)}%"></div>` : ''}</td></tr>`;
-    }).join('') + `<tr class="sub"><th></th><th>Total gastos</th><th class="n">${tot('pres')}</th><th class="n">${tot('prom')}</th><th class="n">${tot('ult')}</th><th></th></tr>` +
+    }).join('') + `<tr class="sub"><th class="solo-pc"></th><th>Total gastos</th><th></th><th class="n">${tot('pres')}</th><th class="n">${tot('aj')}</th><th class="n">${tot('prom')}</th><th class="n">${tot('ult')}</th><th></th></tr>` +
     filaDeuda(suma(filas, f => f.pres), ult);
+  pintarIngresos(aj);
+}
+
+const filasPresupuesto = ult => categoriasGasto().map(c => ({ ...c, pres: presDe(c.nivel2), fijo: esFijo(c),
+  prom: -promedioMensual(m => m.nivel2 === c.nivel2, mesesPres()),
+  ult: ult ? -suma(analisis().filter(m => m.mes === ult && m.nivel2 === c.nivel2)) : 0 }));
+
+// reparte el ingreso: fijos y pago a deudas se respetan; lo que sobra se reparte entre los flexibles
+// en proporción a su presupuesto (o a su promedio si no tienen presupuesto)
+function ajuste(filas) {
+  const ing = ingresoPlaneado(), fijos = suma(filas.filter(f => f.fijo), f => f.pres), deuda = presDeuda();
+  const base = f => f.pres || f.prom, flex = suma(filas.filter(f => !f.fijo), base);
+  const libre = ing - fijos - deuda, factor = flex > 0 ? Math.max(0, libre) / flex : 0;
+  return { ing, fijos, deuda, flex, libre, factor, de: f => f.fijo ? f.pres : redondea(base(f) * factor) };
+}
+
+function pintarIngresos(aj) {
+  const cats = [...new Set([...D.Movimientos.filter(m => m.nivel1 === 'Ingreso').map(m => m.nivel2), ...D.Presupuesto.filter(p => p.nivel1 === 'Ingreso').map(p => p.nivel2)])].sort();
+  $('#tIng').innerHTML = `<tr><th>Ingreso</th><th class="n">Lo que espero al mes</th><th class="n">Promedio ${rangoPromedio()}</th></tr>` +
+    cats.map(c => `<tr><td class="ancho"><b>${esc(c)}</b>${c === 'Extraordinario' ? ' <span class="muted">(bonos, ventas: mejor no contar con ellos)</span>' : ''}</td>
+      <td class="n" data-l="Lo que espero al mes"><input class="num moneda" inputmode="decimal" data-n1="Ingreso" data-n2="${esc(c)}" value="${fmtIn(presDe(c, 'Ingreso') || '')}"></td>
+      <td class="n muted" data-l="Promedio">${fmt(promedioMensual(m => m.nivel1 === 'Ingreso' && m.nivel2 === c, mesesPres()))}</td></tr>`).join('') +
+    `<tr class="sub"><th>Total ${hayIngresoPlaneado() ? '' : '<span class="muted" style="font-weight:400">(sin capturar: se usa tu promedio sin extraordinarios)</span>'}</th><th class="n">${fmt(aj.ing)}</th><th></th></tr>`;
+  const pct = Math.round(aj.factor * 100);
+  $('#ajuste').innerHTML = aj.libre < 0
+    ? `<b class="neg">Tus fijos (${fmt(aj.fijos)}) y el pago a deudas (${fmt(aj.deuda)}) suman ${fmt(aj.fijos + aj.deuda)}: superan tu ingreso por ${fmt(-aj.libre)}.</b> No queda nada para lo demás: baja algún fijo o el pago a deudas, o sube el ingreso.`
+    : `Ingreso <b>${fmt(aj.ing)}</b> − fijos ${fmt(aj.fijos)} − pago a deudas ${fmt(aj.deuda)} = <b>${fmt(aj.libre)}</b> para lo demás.
+       Es el <b class="${pct < 100 ? 'neg' : 'pos'}">${pct}%</b> de lo que hoy tienes para esas categorías (${fmt(aj.flex)}): ${pct < 100 ? `cada una tendría que bajar ${100 - pct}%` : `te alcanza y sobran ${fmt(aj.libre - aj.flex)}`}.`;
 }
 
 // deuda aparte: el pago a tarjetas + totales contra el ingreso promedio (sin extraordinarios)
 function filaDeuda(gastoPres, ult) {
-  const pago = presDeuda(), ing = ingresoPromedio(), total = gastoPres + pago, resto = ing - total;
+  const pago = presDeuda(), ing = ingresoPlaneado(), total = gastoPres + pago, resto = ing - total;
   const minimos = suma(D.Deudas, d => +d.minimo || 0);
   const intereses = -promedioMensual(m => m.nivel1 === 'Deuda', mesesPres());
-  return `<tr><td class="muted">Deuda</td><td>${PAGO_DEUDA}</td>
-      <td class="n"><input class="num moneda" inputmode="decimal" data-n1="Deuda" data-n2="${PAGO_DEUDA}" value="${fmtIn(pago || '')}"></td>
-      <td class="n muted" title="Intereses y comisiones promedio">intereses ${fmt(intereses)}</td>
-      <td class="n muted">${ult ? fmt(-suma(D.Movimientos.filter(m => m.mes === ult && m.nivel1 === 'Deuda'))) : ''}</td>
+  return `<tr><td class="muted solo-pc">Deuda</td><td class="ancho"><b>${PAGO_DEUDA}</b></td><td class="muted" data-l="Fijo">siempre</td>
+      <td class="n" data-l="Presupuesto"><input class="num moneda" inputmode="decimal" data-n1="Deuda" data-n2="${PAGO_DEUDA}" value="${fmtIn(pago || '')}"></td>
+      <td class="n muted" data-l="Con tu ingreso">${fmt(pago)}</td>
+      <td class="n muted" title="Intereses y comisiones promedio" data-l="Intereses promedio">${fmt(intereses)}</td>
+      <td class="n muted" data-l="Intereses último mes">${ult ? fmt(-suma(D.Movimientos.filter(m => m.mes === ult && m.nivel1 === 'Deuda'))) : ''}</td>
       <td class="muted">${minimos ? `mínimos de tus tarjetas: ${fmt(minimos)}` : ''}${pago && pago < minimos ? ' <span class="neg">· no cubre los mínimos</span>' : ''}</td></tr>
-    <tr class="sub"><th></th><th>Total con deuda</th><th class="n">${fmt(total)}</th><th colspan="3"></th></tr>
-    <tr><td></td><td>Ingreso promedio (sin extraordinarios, 6 meses)</td><td class="n">${fmt(ing)}</td><td colspan="3"></td></tr>
-    <tr><td></td><td><b>${resto < 0 ? 'Te falta' : 'Te sobra'}</b></td><td class="n ${resto < 0 ? 'neg' : 'pos'}"><b>${fmt(Math.abs(resto))}</b></td><td colspan="3"></td></tr>`;
+    <tr class="sub"><th class="solo-pc"></th><th>Total con deuda</th><th></th><th class="n">${fmt(total)}</th><th colspan="4"></th></tr>
+    <tr><td class="solo-pc"></td><td>${hayIngresoPlaneado() ? 'Ingreso que planeas' : 'Ingreso promedio (sin extraordinarios, 6 meses)'}</td><td></td><td class="n">${fmt(ing)}</td><td colspan="4"></td></tr>
+    <tr><td class="solo-pc"></td><td><b>${resto < 0 ? 'Te falta' : 'Te sobra'}</b></td><td></td><td class="n ${resto < 0 ? 'neg' : 'pos'}"><b>${fmt(Math.abs(resto))}</b></td><td colspan="4"></td></tr>`;
 }
 
 // los montos se ven como moneda ($1,234) y se editan como número
@@ -550,8 +590,9 @@ const aNumero = v => +String(v).replace(/[^0-9.]/g, '') || 0;
 const fmtIn = n => n === '' || n == null ? '' : (+n).toLocaleString('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 2 });
 
 function leerPresupuesto() {
-  D.Presupuesto = [...document.querySelectorAll('#tPres input')].filter(i => aNumero(i.value) > 0)
-    .map(i => ({ nivel1: i.dataset.n1, nivel2: i.dataset.n2, monto: aNumero(i.value) }));
+  const fijo = Object.fromEntries([...document.querySelectorAll('#tPres [data-fijo]')].map(c => [c.dataset.n2, c.checked ? 1 : 0]));
+  D.Presupuesto = [...document.querySelectorAll('#tPres input.moneda, #tIng input.moneda')].filter(i => aNumero(i.value) > 0)
+    .map(i => ({ nivel1: i.dataset.n1, nivel2: i.dataset.n2, monto: aNumero(i.value), fijo: i.dataset.n1 === 'Ingreso' ? '' : fijo[i.dataset.n2] ?? '' }));
 }
 
 // ---------- Reglas de categoría ----------
@@ -624,7 +665,7 @@ function mesesProyeccion() {
 }
 
 function proyeccion() {
-  const prom = ingresoPromedio(), gas = gastoPlan();
+  const prom = ingresoPlaneado(), gas = gastoPlan();
   return mesesProyeccion().map(mes => {
     const p = D.Proyeccion.find(x => x.mes === mes) || { mes };
     const ingreso = (p.ingreso_base === '' || p.ingreso_base == null ? prom : +p.ingreso_base) + (+p.ingreso_extra || 0);
@@ -848,7 +889,7 @@ $('#tMov').addEventListener('click', conError(async e => {
 
 $('#presMeses').onchange = e => { store('finanzas:mesesPres', e.target.value); pintarPresupuesto(); };
 $('#btnPromedios').onclick = () => {
-  document.querySelectorAll('#tPres input').forEach(i => {
+  document.querySelectorAll('#tPres input.moneda').forEach(i => {
     if (!i.value) { const p = -promedioMensual(m => m.nivel2 === i.dataset.n2, mesesPres()); if (p > 0) i.value = fmt(Math.round(p / 100) * 100); }
   });
 };
@@ -861,6 +902,19 @@ $('#btnGuardarPres').onclick = conError(async () => {
   leerPresupuesto(); await reescribir('Presupuesto', D.Presupuesto); estado('Presupuesto guardado ✓'); pintarPresupuesto(); pintarPlan();
 });
 $('#tPres').addEventListener('change', () => { leerPresupuesto(); pintarPresupuesto(); });
+$('#tIng').addEventListener('change', () => { leerPresupuesto(); pintarPresupuesto(); });
+$('#btnAjustar').onclick = conError(async () => {
+  leerPresupuesto();
+  const filas = filasPresupuesto(), aj = ajuste(filas);
+  if (aj.libre < 0) return alert('Tus fijos y el pago a deudas ya superan tu ingreso: no hay nada que repartir.');
+  if (!confirm(`¿Poner en el presupuesto los montos ajustados a un ingreso de ${fmt(aj.ing)}? Los fijos y el pago a deudas no cambian.`)) return;
+  for (const f of filas.filter(f => !f.fijo)) {
+    const p = D.Presupuesto.find(x => x.nivel2 === f.nivel2 && x.nivel1 !== 'Ingreso'), v = aj.de(f);
+    if (p) p.monto = v; else if (v > 0) D.Presupuesto.push({ nivel1: f.nivel1, nivel2: f.nivel2, monto: v, fijo: 0 });
+  }
+  D.Presupuesto = D.Presupuesto.filter(p => +p.monto > 0);
+  await reescribir('Presupuesto', D.Presupuesto); estado('Presupuesto ajustado y guardado ✓'); pintarPresupuesto(); pintarPlan(); pintarResumen();
+});
 // los repartos se ven en vivo en Presupuesto y Resumen; se guardan en el Sheet con el botón
 const repintarRepartos = () => { leerRepartos(); pintarRepartos(); pintarPresupuesto(); pintarResumen(); pintarPlan(); };
 $('#tRep').addEventListener('change', repintarRepartos);

@@ -189,6 +189,13 @@ tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
 
   <section id="presupuesto" hidden>
     <div class="card">
+      <h2>¿Cuánto me puedo gastar?</h2>
+      <p class="muted">1) Captura los ingresos que esperas al mes. 2) En la tabla de abajo marca como <b>fijo</b> lo que no puede cambiar (renta, colegiaturas, seguros…). 3) Lo que sobra después de fijos y pago a deudas se reparte entre las demás categorías en proporción a su presupuesto (o a su promedio si no tienen): columna <b>Con tu ingreso</b>.</p>
+      <div class="tabla"><table id="tIng" class="cards"></table></div>
+      <div id="ajuste" class="aviso" style="margin-top:12px"></div>
+      <div class="fila"><button class="btn" id="btnAjustar">Usar los montos ajustados como presupuesto</button></div>
+    </div>
+    <div class="card">
       <h2>Presupuesto mensual por categoría</h2>
       <div class="fila">
         <label>Promedio de <select id="presMeses"><option value="3">3 meses</option><option value="6">6 meses</option><option value="9">9 meses</option><option value="12">12 meses</option></select></label>

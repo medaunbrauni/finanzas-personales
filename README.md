@@ -10,13 +10,14 @@ Los datos viven en un Google Sheet del usuario; este repo no contiene datos.
 | Pestaña | Columnas |
 |---|---|
 | Movimientos | id, fecha, mes, cuenta, descripcion, monto (− gasto / + ingreso), nivel1, nivel2, nivel3, ambito, msi, nota |
-| Presupuesto | nivel1, nivel2, monto |
+| Presupuesto | nivel1, nivel2, monto, fijo (1 = no se ajusta con el ingreso; vacío = fijo si nivel1 es "Fijos") |
 | Proyeccion | mes, ingreso_base, ingreso_extra, pago_deuda, nota |
 | Deudas | nombre, saldo, tasa, minimo, nota, saldo_inicial (para medir el avance de la meta) |
 | Sugerencias | nivel3, nivel1, nivel2, ambito, motivo, confianza (sugerencia IA por comercio; el usuario la acepta con ✓) |
 | Reglas | contiene, nivel1, nivel2, ambito (si la descripción contiene el texto → esa categoría al importar; ganan sobre lo aprendido) |
 | Repartos | comercio, categoria, destino, porcentaje, nota (manda un % de un comercio a otra categoría; solo afecta los análisis) |
 
+Renglones con nivel1 `Ingreso` son los ingresos que planeas al mes: con ellos, "¿Cuánto me puedo gastar?" respeta fijos y pago a deudas y reparte el resto en proporción.
 Presupuesto acepta el renglón `Deuda, Pago a deudas, <monto>`: es el pago mensual a tarjetas que usa el Plan cuando un mes no tiene pago capturado.
 Un movimiento con `#único` en la nota (muebles, anticipos…) no entra a los promedios.
 
