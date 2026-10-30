@@ -470,6 +470,15 @@ async function importar(file) {
     return pintarTodo();
   }
   if (!tab) return alert('El CSV no tiene las columnas de ninguna pestaña (' + h.join(', ') + ')');
+  if (tab === 'Presupuesto') {
+    // se agrega/actualiza por categoría; las que no vienen en el CSV se quedan como están
+    const nuevas = objs.filter(o => !D.Presupuesto.some(p => p.nivel2 === o.nivel2));
+    if (!confirm(`Presupuesto: ${objs.length - nuevas.length} categorías se actualizan y ${nuevas.length} se agregan. Las demás no se tocan. ¿Seguir?`)) return;
+    const porCat = Object.fromEntries(D.Presupuesto.map(p => [p.nivel2, p]));
+    for (const o of objs) porCat[o.nivel2] = { ...porCat[o.nivel2], ...Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '').map(([k, v]) => [k, k === 'monto' ? aNumero(v) : v])) };
+    await reescribir(tab, Object.values(porCat));
+    return cargar();
+  }
   if (tab !== 'Movimientos') {
     if (!confirm(`Esto reemplaza la pestaña ${tab} con ${objs.length} filas. ¿Seguir?`)) return;
     await reescribir(tab, objs);

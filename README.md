@@ -21,7 +21,7 @@ Renglones con nivel1 `Ingreso` son los ingresos que planeas al mes: con ellos, "
 Presupuesto acepta el renglón `Deuda, Pago a deudas, <monto>`: es el pago mensual a tarjetas que usa el Plan cuando un mes no tiene pago capturado.
 Un movimiento con `#único` en la nota (muebles, anticipos…) no entra a los promedios.
 
-"Importar CSV" detecta la pestaña por los encabezados. Movimientos se agregan (los `id` repetidos se ignoran); las demás pestañas se reemplazan.
+"Importar CSV" detecta la pestaña por los encabezados. Movimientos se agregan (los `id` repetidos se ignoran); Presupuesto se agrega o actualiza por categoría (nivel2); las demás pestañas se reemplazan.
 
 ## Google Cloud (una vez)
 Usa el mismo proyecto/Client ID que Bonos AFIRME:
