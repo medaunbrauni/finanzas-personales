@@ -18,7 +18,7 @@ App de una página sin build: `index.html` + `app.js` + `deuda.js`. Publicada en
 
 ## Importar CSV (botón en Movimientos)
 - Encabezado igual a una pestaña → Movimientos se agregan (ids repetidos se ignoran; lo categorizado a mano gana por
-  `nivel3`); otras pestañas se reemplazan.
+  `nivel3`); Presupuesto se agrega/actualiza por `nivel2` (lo que no viene se queda); otras pestañas se reemplazan.
 - Encabezado `id` + subconjunto de `nivel1,nivel2,nivel3,ambito,nota` → actualiza movimientos existentes
   (la nota se agrega, no se pisa). Así se mandan correcciones y marcas "Revisar: …".
 
@@ -26,6 +26,13 @@ App de una página sin build: `index.html` + `app.js` + `deuda.js`. Publicada en
 `G:\Mi unidad\Finanzas\procesar.py CLAVE1 CLAVE2 …` → `G:\Mi unidad\Finanzas\importar\movimientos_<fecha>.csv`.
 Cada PDF se valida contra el resumen del propio estado de cuenta; todo debe decir OK. Las claves de los PDF cambian
 cada mes y no se guardan en archivo. Ahí viven las reglas de categorización con datos personales.
+
+Amazon (también privado, en `G:\Mi unidad\Finanzas\amazon\`), con la exportación "Your Orders" de Amazon:
+- `amazon_xlsx.py <carpeta Your Orders> <salida.xlsx>` → matriz de pedidos categorizados (físicos + digitales,
+  reembolsos prorrateados).
+- `amazon_cruce.py <movimientos.csv> <salida.xlsx> <cambios.csv>` → cruza los cargos AMAZON del banco con los pedidos
+  y genera un CSV de cambios (`id,nivel1,nivel2,nota`) para importar; compras ≥ $5,000 van a "Compras únicas" con `#único`.
+- Correr scripts sobre descargas con `python -I`.
 
 ## Probar sin Google
 Copiar la app a una carpeta del scratchpad, inyectar antes de `app.js` un `<script>` que ponga token/sheet en storage y
