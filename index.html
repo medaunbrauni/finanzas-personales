@@ -62,6 +62,9 @@ td input.num { text-align: right; min-width: 100px; }
 .muted { color: var(--text-muted); }
 .barra { height: 8px; border-radius: 4px; background: var(--accent); }
 .barra.sobre { background: var(--critical); }
+#tRecorte tr[data-cat] { cursor: pointer; }
+#tRecorte tr[data-cat]:hover td { background: var(--surface-0); }
+tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
 .graf { position: relative; height: 300px; }
 .aviso { padding: 10px 12px; border-radius: 8px; background: var(--surface-0); border: 1px solid var(--border); margin-bottom: 12px; }
 #login { text-align: center; padding: 48px 16px; }
@@ -100,9 +103,15 @@ td input.num { text-align: right; min-width: 100px; }
       <label>Ámbito <select id="fAmbito"><option value="">Todos</option><option>Personal</option><option>Medaunbrauni</option><option>HJR</option></select></label>
       <label><input type="checkbox" id="fProm"> Promedio mensual de</label>
       <select id="fPromN"><option value="3">3 meses</option><option value="6">6 meses</option><option value="9">9 meses</option><option value="12">12 meses</option></select>
+      <label title="Quita intereses y comisiones de tarjetas: lo que gastarías si no tuvieras deuda"><input type="checkbox" id="fSinDeuda"> Sin deuda</label>
       <span class="muted" id="promInfo"></span>
     </div>
     <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <h2>¿Dónde puedo recortar?</h2>
+      <p class="muted">Gastos variables, promedio de los últimos 3 meses completos contra los 3 anteriores. "Compras chicas" = menos de $300: suelen ser antojo o goteo. Clic en una fila para ver su desglose.</p>
+      <div class="tabla"><table id="tRecorte"></table></div>
+    </div>
     <div class="card"><h2>Gasto por mes</h2><div class="graf"><canvas id="gMeses"></canvas></div></div>
     <div class="card"><h2>¿En qué se va el dinero?</h2><div class="graf" id="gCatWrap"><canvas id="gCat"></canvas></div></div>
     <div class="card" id="detalle">
@@ -154,7 +163,7 @@ td input.num { text-align: right; min-width: 100px; }
     <div class="kpis" id="kpisPlan"></div>
     <div class="card">
       <h2>Proyección por mes</h2>
-      <p class="muted">Si dejas "Pago a deudas" vacío, se usa todo lo disponible del mes. Gastos = tu presupuesto (sin Deuda); mientras no lo captures, se usa tu gasto promedio real.</p>
+      <p class="muted">Si dejas "Pago a deudas" vacío, se usa el pago a deudas de tu presupuesto o, si no lo capturaste, todo lo disponible del mes. Gastos = tu presupuesto (sin Deuda); mientras no lo captures, se usa tu gasto promedio real.</p>
       <div class="fila"><button class="btn" id="btnGuardarProy">Guardar proyección</button><button class="btn sec" id="btnMasMeses">+6 meses</button></div>
       <div class="tabla"><table id="tProy"></table></div>
     </div>

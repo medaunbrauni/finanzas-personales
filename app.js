@@ -125,23 +125,30 @@ function pintarResumen() {
   const per = prom ? '' : $('#fPeriodo').value, amb = $('#fAmbito').value, cta = $('#fCuenta').value;
   const enCuenta = m => !cta || (cta.endsWith('*') ? m.cuenta.startsWith(cta.slice(0, -1)) : m.cuenta === cta);
   const div = prom ? msProm.length || 1 : 1;
+  // "sin deuda": quita intereses y comisiones para ver el costo de tu nivel de vida
+  const sinDeuda = $('#fSinDeuda').checked;
+  const esGasto = m => !NO_GASTO.includes(m.nivel1) && !(sinDeuda && m.nivel1 === 'Deuda');
   const M = D.Movimientos.filter(m => (prom ? msProm.includes(m.mes) : !per || m.mes === per) && (!amb || m.ambito === amb) && enCuenta(m));
-  const G = M.filter(m => !NO_GASTO.includes(m.nivel1));
+  const G = M.filter(esGasto);
   const ing = suma(M.filter(m => m.nivel1 === 'Ingreso')) / div;
   const extra = suma(M.filter(m => m.nivel2 === 'Extraordinario')) / div;
-  const gas = -suma(G) / div, intereses = -suma(G.filter(m => m.nivel1 === 'Deuda')) / div;
+  const gas = -suma(G) / div, intereses = -suma(M.filter(m => m.nivel1 === 'Deuda')) / div;
   const nMeses = per ? 1 : meses().length;
+  const falta = gas - (ing - extra);
   $('#promInfo').textContent = prom && msProm.length ? `Promedio mensual de ${msProm.length} meses: ${nombreMes(msProm[0])} – ${nombreMes(msProm.at(-1))}` : '';
   $('#kpis').innerHTML = [
     ['Ingresos' + (prom ? ' al mes' : ''), fmt(ing), extra ? `incluye ${fmt(extra)} extraordinario` : ''],
-    ['Gastos' + (prom ? ' al mes' : ''), fmt(gas), per || prom ? '' : `${fmt(gas / nMeses)} al mes`],
-    ['Intereses y comisiones', fmt(intereses), `${Math.round(intereses / (gas || 1) * 100)}% de tus gastos`],
-    ['Balance', `<span class="${ing - gas < 0 ? 'neg' : 'pos'}">${fmt(ing - gas)}</span>`, ''],
+    ['Gastos' + (sinDeuda ? ' sin deuda' : '') + (prom ? ' al mes' : ''), fmt(gas), per || prom ? '' : `${fmt(gas / nMeses)} al mes`],
+    sinDeuda
+      ? ['Ingreso necesario sin deuda', fmt(gas), `${falta > 0 ? 'te faltan' : 'te sobran'} ${fmt(Math.abs(falta))} sin contar extraordinarios`]
+      : ['Intereses y comisiones', fmt(intereses), `${Math.round(intereses / (gas || 1) * 100)}% de tus gastos`],
+    ['Balance' + (sinDeuda ? ' sin deuda' : ''), `<span class="${ing - gas < 0 ? 'neg' : 'pos'}">${fmt(ing - gas)}</span>`, sinDeuda ? `la deuda te cuesta ${fmt(intereses)} en intereses` : ''],
   ].map(([t, v, s]) => `<div class="kpi"><small>${t}</small><b>${v}</b><small>${s}</small></div>`).join('');
+  pintarRecorte(amb, enCuenta);
 
   // gasto por mes, apilado por nivel 1
   const ms = meses();
-  const GA = gastos().filter(m => (!amb || m.ambito === amb) && enCuenta(m));
+  const GA = gastos().filter(m => esGasto(m) && (!amb || m.ambito === amb) && enCuenta(m));
   const n1 = m => SERIES_N1.includes(m.nivel1) ? m.nivel1 : 'Otros';
   const series = [...SERIES_N1, 'Otros'].filter(s => GA.some(m => n1(m) === s));
   grafica('gMeses', {
@@ -173,6 +180,29 @@ function pintarResumen() {
   }, {})).sort((a, b) => b.total - a.total).slice(0, 15);
   $('#tTop').innerHTML = `<tr><th>Comercio / destino</th><th>Categoría</th><th class="n">Veces${prom ? ' al mes' : ''}</th><th class="n">${prom ? 'Al mes' : 'Total'}</th></tr>` +
     top.map(t => `<tr><td>${esc(t.n3)}</td><td>${esc(t.n2)}</td><td class="n">${+(t.veces / div).toFixed(1)}</td><td class="n">${fmt(t.total / div)}</td></tr>`).join('');
+}
+
+// ---------- Dónde recortar ----------
+// variables de los últimos 3 meses completos vs. los 3 anteriores, con compras chicas y presupuesto
+function pintarRecorte(amb, enCuenta) {
+  const ms = mesesCompletos(6), rec = ms.slice(-3), ant = ms.slice(0, -3);
+  const V = D.Movimientos.filter(m => m.nivel1 === 'Variables' && m.monto < 0 && (!amb || m.ambito === amb) && enCuenta(m));
+  const prom = (cat, lista) => lista.length ? -suma(V.filter(m => m.nivel2 === cat && lista.includes(m.mes))) / lista.length : 0;
+  const filas = [...new Set(V.filter(m => rec.includes(m.mes)).map(m => m.nivel2))].map(cat => ({
+    cat, ahora: prom(cat, rec), antes: prom(cat, ant), pres: presDe(cat),
+    chicas: V.filter(m => m.nivel2 === cat && rec.includes(m.mes) && m.monto > -300).length / (rec.length || 1),
+  })).filter(f => f.ahora >= 100).sort((a, b) => b.ahora - a.ahora);
+  const tend = f => {
+    if (!f.antes) return '<span class="muted">nuevo</span>';
+    const p = Math.round((f.ahora / f.antes - 1) * 100);
+    return `<span class="${p > 5 ? 'neg' : p < -5 ? 'pos' : 'muted'}">${p > 0 ? '▲' : p < 0 ? '▼' : ''} ${Math.abs(p)}%</span>`;
+  };
+  $('#tRecorte').innerHTML = rec.length < 3 ? '<tr><td class="muted">Hacen falta al menos 3 meses completos.</td></tr>' :
+    `<tr><th>Categoría</th><th class="n">Al mes ahora</th><th class="n">Antes</th><th class="n">Tendencia</th><th class="n">Compras chicas al mes</th><th class="n">Presupuesto</th><th class="n">Si recortas 20%</th></tr>` +
+    filas.map(f => `<tr data-cat="${esc(f.cat)}"><td>${esc(f.cat)}</td><td class="n">${fmt(f.ahora)}</td><td class="n muted">${f.antes ? fmt(f.antes) : '—'}</td>
+      <td class="n">${tend(f)}</td><td class="n">${f.chicas >= 1 ? Math.round(f.chicas) : '—'}</td>
+      <td class="n ${f.pres && f.ahora > f.pres ? 'neg' : ''}">${f.pres ? fmt(f.pres) : '—'}</td><td class="n pos">${fmt(f.ahora * 0.2)}</td></tr>`).join('') +
+    `<tr class="sub"><th>Total variables</th><th class="n">${fmt(suma(filas, f => f.ahora))}</th><th class="n">${fmt(suma(filas, f => f.antes))}</th><th></th><th></th><th></th><th class="n">${fmt(suma(filas, f => f.ahora) * 0.2)}</th></tr>`;
 }
 
 // ---------- Desglose de una categoría ----------
@@ -368,11 +398,14 @@ async function importar(file) {
 function categoriasGasto() {
   const map = new Map();
   for (const m of gastos()) if (m.nivel1 !== 'Deuda') map.set(m.nivel2, m.nivel1);
-  for (const p of D.Presupuesto) map.set(p.nivel2, p.nivel1);
+  for (const p of D.Presupuesto) if (p.nivel1 !== 'Deuda') map.set(p.nivel2, p.nivel1);
   return [...map].map(([nivel2, nivel1]) => ({ nivel1, nivel2 })).sort((a, b) => a.nivel1.localeCompare(b.nivel1) || a.nivel2.localeCompare(b.nivel2));
 }
 const presDe = n2 => +(D.Presupuesto.find(p => p.nivel2 === n2)?.monto || 0);
 const totalPresupuesto = () => suma(D.Presupuesto.filter(p => p.nivel1 !== 'Deuda'), p => +p.monto || 0);
+// pago mensual a tarjetas que planeas: renglón Deuda / Pago a deudas del presupuesto
+const PAGO_DEUDA = 'Pago a deudas';
+const presDeuda = () => presDe(PAGO_DEUDA);
 // sin presupuesto capturado, el plan usa el gasto real promedio (sin intereses, que ya van en el pago a deudas)
 const gastoPlan = () => totalPresupuesto() || -promedioMensual(m => !NO_GASTO.includes(m.nivel1) && m.nivel1 !== 'Deuda', 3);
 
@@ -395,7 +428,23 @@ function pintarPresupuesto() {
       <td class="n"><input class="num moneda" inputmode="decimal" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${fmtIn(f.pres || '')}"></td>
       <td class="n">${fmt(f.prom)}</td><td class="n">${fmt(f.ult)}</td>
       <td>${f.pres ? `<div class="barra ${pct > 1 ? 'sobre' : ''}" style="width:${Math.min(100, pct * 100)}%" title="${Math.round(pct * 100)}%"></div>` : ''}</td></tr>`;
-    }).join('') + `<tr><th></th><th>Total</th><th class="n">${tot('pres')}</th><th class="n">${tot('prom')}</th><th class="n">${tot('ult')}</th><th></th></tr>`;
+    }).join('') + `<tr class="sub"><th></th><th>Total gastos</th><th class="n">${tot('pres')}</th><th class="n">${tot('prom')}</th><th class="n">${tot('ult')}</th><th></th></tr>` +
+    filaDeuda(suma(filas, f => f.pres), ult);
+}
+
+// deuda aparte: el pago a tarjetas + totales contra el ingreso promedio (sin extraordinarios)
+function filaDeuda(gastoPres, ult) {
+  const pago = presDeuda(), ing = ingresoPromedio(), total = gastoPres + pago, resto = ing - total;
+  const minimos = suma(D.Deudas, d => +d.minimo || 0);
+  const intereses = -promedioMensual(m => m.nivel1 === 'Deuda', mesesPres());
+  return `<tr><td class="muted">Deuda</td><td>${PAGO_DEUDA}</td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-n1="Deuda" data-n2="${PAGO_DEUDA}" value="${fmtIn(pago || '')}"></td>
+      <td class="n muted" title="Intereses y comisiones promedio">intereses ${fmt(intereses)}</td>
+      <td class="n muted">${ult ? fmt(-suma(D.Movimientos.filter(m => m.mes === ult && m.nivel1 === 'Deuda'))) : ''}</td>
+      <td class="muted">${minimos ? `mínimos de tus tarjetas: ${fmt(minimos)}` : ''}${pago && pago < minimos ? ' <span class="neg">· no cubre los mínimos</span>' : ''}</td></tr>
+    <tr class="sub"><th></th><th>Total con deuda</th><th class="n">${fmt(total)}</th><th colspan="3"></th></tr>
+    <tr><td></td><td>Ingreso promedio (sin extraordinarios, 6 meses)</td><td class="n">${fmt(ing)}</td><td colspan="3"></td></tr>
+    <tr><td></td><td><b>${resto < 0 ? 'Te falta' : 'Te sobra'}</b></td><td class="n ${resto < 0 ? 'neg' : 'pos'}"><b>${fmt(Math.abs(resto))}</b></td><td colspan="3"></td></tr>`;
 }
 
 // los montos se ven como moneda ($1,234) y se editan como número
@@ -425,7 +474,7 @@ function proyeccion() {
     const p = D.Proyeccion.find(x => x.mes === mes) || { mes };
     const ingreso = (p.ingreso_base === '' || p.ingreso_base == null ? prom : +p.ingreso_base) + (+p.ingreso_extra || 0);
     const disponible = ingreso - gas;
-    const pago = p.pago_deuda === '' || p.pago_deuda == null ? Math.max(0, disponible) : +p.pago_deuda;
+    const pago = p.pago_deuda === '' || p.pago_deuda == null ? presDeuda() || Math.max(0, disponible) : +p.pago_deuda;
     return { ...p, prom, gas, disponible, pago };
   });
 }
@@ -447,7 +496,7 @@ function pintarPlan() {
       <td class="n"><input class="num moneda" inputmode="decimal" data-k="ingreso_base" placeholder="${fmt(p.prom)}" value="${fmtIn(p.ingreso_base)}"></td>
       <td class="n"><input class="num moneda" inputmode="decimal" data-k="ingreso_extra" value="${fmtIn(p.ingreso_extra)}"></td>
       <td class="n">${fmt(p.gas)}</td><td class="n ${p.disponible < 0 ? 'neg' : ''}">${fmt(p.disponible)}</td>
-      <td class="n"><input class="num moneda" inputmode="decimal" data-k="pago_deuda" placeholder="${fmt(Math.max(0, p.disponible))}" value="${fmtIn(p.pago_deuda)}"></td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-k="pago_deuda" placeholder="${fmt(presDeuda() || Math.max(0, p.disponible))}" value="${fmtIn(p.pago_deuda)}"></td>
       <td class="n">${av.meses[i] ? fmt(av.meses[i].total) : fmt(0)}</td>
       <td><input data-k="nota" value="${esc(p.nota)}"></td></tr>`).join('');
 
@@ -523,6 +572,13 @@ $('#btnUsar').onclick = conError(async () => {
 });
 
 ['#fPeriodo', '#fAmbito', '#fCuenta'].forEach(s => $(s).onchange = pintarResumen);
+$('#fSinDeuda').checked = store('finanzas:sinDeuda') === '1';
+$('#fSinDeuda').onchange = e => { store('finanzas:sinDeuda', e.target.checked ? '1' : '0'); pintarResumen(); };
+$('#tRecorte').addEventListener('click', e => {
+  const cat = e.target.closest('tr[data-cat]')?.dataset.cat;
+  if (!cat) return;
+  catDet = cat; pintarResumen(); $('#detalle').scrollIntoView({ behavior: 'smooth' });
+});
 $('#fCatDet').onchange = e => { catDet = e.target.value; pintarResumen(); };
 try { const g = JSON.parse(localStorage.getItem('finanzas:prom')); if (g) { $('#fProm').checked = g.on; $('#fPromN').value = g.n; } } catch {}
 ['#fProm', '#fPromN'].forEach(s => $(s).onchange = () => {
