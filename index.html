@@ -33,7 +33,7 @@ body { margin: 0; background: var(--surface-0); color: var(--text-primary); font
 header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 16px; background: var(--surface-1); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
 header h1 { font-size: 16px; margin: 0; }
 nav { display: flex; gap: 4px; overflow-x: auto; max-width: 100%; }
-nav button { background: none; border: 0; padding: 6px 10px; border-radius: 6px; color: var(--text-secondary); cursor: pointer; font: inherit; }
+nav button { white-space: nowrap; background: none; border: 0; padding: 6px 10px; border-radius: 6px; color: var(--text-secondary); cursor: pointer; font: inherit; }
 nav button[aria-current="true"] { background: var(--surface-0); color: var(--text-primary); font-weight: 600; }
 #estado { margin-left: auto; color: var(--text-muted); font-size: 12px; }
 main { padding: 16px; max-width: 1200px; margin: 0 auto; }
@@ -62,6 +62,19 @@ td input.num { text-align: right; min-width: 100px; }
 .muted { color: var(--text-muted); }
 .barra { height: 8px; border-radius: 4px; background: var(--accent); }
 .barra.sobre { background: var(--critical); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+/* meta de deuda */
+.meta { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; align-items: center; }
+.meta b.grande { font-size: 20px; font-variant-numeric: tabular-nums; }
+.pista { grid-column: 1 / -1; height: 10px; border-radius: 5px; background: var(--surface-0); border: 1px solid var(--border); overflow: hidden; }
+.pista > div { height: 100%; background: var(--good); }
+/* semáforo del mes */
+.sem { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px 20px; }
+.sem .c { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 13px; }
+.sem .c .pista { height: 8px; }
+.sem .verde { background: var(--good); } .sem .ambar { background: var(--series-4); } .sem .rojo { background: var(--critical); }
+.kpi { border-top: 3px solid var(--border); }
+.kpi.k-ing { border-top-color: var(--good); } .kpi.k-gas { border-top-color: var(--series-2); } .kpi.k-int { border-top-color: var(--critical); } .kpi.k-bal { border-top-color: var(--accent); }
 #tRecorte tr[data-cat] { cursor: pointer; }
 #tRecorte tr[data-cat]:hover td { background: var(--surface-0); }
 tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
@@ -69,16 +82,35 @@ tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
 .aviso { padding: 10px 12px; border-radius: 8px; background: var(--surface-0); border: 1px solid var(--border); margin-bottom: 12px; }
 #login { text-align: center; padding: 48px 16px; }
 @media (max-width: 600px) { #estado { width: 100%; margin: 0; } }
+/* celular: las tablas largas se ven como tarjetas (cada celda con su etiqueta) */
+@media (max-width: 640px) {
+  main { padding: 12px; }
+  .card { padding: 12px; }
+  table.cards, table.cards tbody { display: block; }
+  table.cards tr:first-child { display: none; }
+  table.cards { width: 100%; }
+  table.cards tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  table.cards td input:not([type="checkbox"]), table.cards td select { width: 100%; }
+  table.cards .solo-pc { display: none; }
+  .fila > * { max-width: 100%; }
+  #mTexto { flex: 1; }
+  table.cards td, table.cards th { border: 0; padding: 0; white-space: normal; text-align: left !important; }
+  table.cards td[data-l]::before { content: attr(data-l); display: block; font-size: 11px; color: var(--text-muted); }
+  table.cards td.ancho { grid-column: 1 / -1; }
+  table.cards td input, table.cards td select { min-width: 0; }
+  .graf { height: 240px; }
+}
 </style>
 </head>
 <body>
 <header>
   <h1>Finanzas Personales</h1>
   <nav id="tabs" hidden>
-    <button data-v="resumen" aria-current="true">Resumen</button>
-    <button data-v="movimientos">Movimientos</button>
-    <button data-v="presupuesto">Presupuesto</button>
-    <button data-v="plan">Plan y deudas</button>
+    <button data-v="resumen" aria-current="true">📊 Resumen</button>
+    <button data-v="movimientos">🧾 Movimientos</button>
+    <button data-v="presupuesto">🎯 Presupuesto</button>
+    <button data-v="plan">📉 Plan y deudas</button>
+    <button data-v="reglas">⚙️ Reglas</button>
   </nav>
   <span id="estado"></span>
 </header>
@@ -97,6 +129,9 @@ tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
   </section>
 
   <section id="resumen" hidden>
+    <div class="aviso" id="vacio" hidden>Aún no hay movimientos. Ve a <b>🧾 Movimientos → Importar CSV</b> y carga el archivo que genera <code>procesar.py</code>.</div>
+    <div class="card meta" id="metaDeuda" hidden></div>
+    <div class="card" id="semaforo"></div>
     <div class="fila">
       <label>Periodo <select id="fPeriodo"></select></label>
       <label>Cuenta <select id="fCuenta"></select></label>
@@ -110,7 +145,7 @@ tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
     <div class="card">
       <h2>¿Dónde puedo recortar?</h2>
       <p class="muted">Gastos variables, promedio de los últimos 3 meses completos contra los 3 anteriores. "Compras chicas" = menos de $300: suelen ser antojo o goteo. Clic en una fila para ver su desglose.</p>
-      <div class="tabla"><table id="tRecorte"></table></div>
+      <div class="tabla"><table id="tRecorte" class="cards"></table></div>
     </div>
     <div class="card"><h2>Gasto por mes</h2><div class="graf"><canvas id="gMeses"></canvas></div></div>
     <div class="card"><h2>¿En qué se va el dinero?</h2><div class="graf" id="gCatWrap"><canvas id="gCat"></canvas></div></div>
@@ -119,6 +154,11 @@ tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
       <p class="muted">Tip: da clic en una barra de la gráfica de arriba para ver su desglose.</p>
       <div class="graf" id="gDetWrap"><canvas id="gDet"></canvas></div>
       <div class="tabla" style="max-height:50vh;margin-top:12px"><table id="tDet"></table></div>
+    </div>
+    <div class="card">
+      <h2>Comparar meses</h2>
+      <div class="fila"><select id="cmpA"></select> contra <select id="cmpB"></select> <span class="muted" id="cmpInfo"></span></div>
+      <div class="tabla"><table id="tCmp" class="cards"></table></div>
     </div>
     <div class="card"><h2>Top 15 comercios / destinos</h2><div class="tabla"><table id="tTop"></table></div></div>
   </section>
@@ -139,10 +179,11 @@ tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
         <select id="b_ambito"></select>
         <button class="btn" id="bulkAplicar">Aplicar a seleccionados</button>
         <button class="btn sec" id="bulkSug">Aceptar sugerencia IA</button>
+        <button class="btn sec" id="bulkUnico" title="Muebles, anticipos, reparaciones: no entran a los promedios">Marcar / desmarcar gasto único</button>
         <button class="btn sec" id="bulkQuitar">Quitar selección</button>
       </div>
       <p class="muted" id="mInfo"></p>
-      <div class="tabla" style="max-height:70vh"><table id="tMov"></table></div>
+      <div class="tabla" style="max-height:70vh"><table id="tMov" class="cards"></table></div>
     </div>
   </section>
 
@@ -155,7 +196,22 @@ tr.sub td, tr.sub th { border-top: 2px solid var(--border); }
         <button class="btn sec" id="btnBorrarPres">Borrar todo</button>
         <button class="btn" id="btnGuardarPres">Guardar</button>
       </div>
-      <div class="tabla"><table id="tPres"></table></div>
+      <div class="tabla"><table id="tPres" class="cards"></table></div>
+    </div>
+  </section>
+
+  <section id="reglas" hidden>
+    <div class="card">
+      <h2>Reglas de categoría</h2>
+      <p class="muted">Si la descripción de un movimiento contiene el texto, se le pone esa categoría al importar (ganan sobre lo aprendido). La primera regla que coincide es la que aplica.</p>
+      <div class="tabla"><table id="tReg" class="cards"></table></div>
+      <div class="fila" style="margin-top:8px"><button class="btn sec" id="btnAddReg">+ Regla</button><button class="btn" id="btnGuardarReg">Guardar reglas</button><button class="btn sec" id="btnAplicarReg">Aplicar a movimientos existentes</button></div>
+    </div>
+    <div class="card">
+      <h2>Repartos de comercios</h2>
+      <p class="muted">Cuando un comercio mezcla cosas (p. ej. Amazon: consumibles de casa y ocio), manda un % de cada compra a otra categoría. Solo afecta Resumen, Presupuesto y Plan; tus movimientos no cambian.</p>
+      <div class="tabla"><table id="tRep" class="cards"></table></div>
+      <div class="fila" style="margin-top:8px"><button class="btn sec" id="btnAddRep">+ Reparto</button><button class="btn" id="btnGuardarRep">Guardar repartos</button></div>
     </div>
   </section>
 

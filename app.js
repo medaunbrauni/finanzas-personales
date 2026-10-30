@@ -6,8 +6,10 @@ const TABS = {
   Movimientos: ['id', 'fecha', 'mes', 'cuenta', 'descripcion', 'monto', 'nivel1', 'nivel2', 'nivel3', 'ambito', 'msi', 'nota'],
   Presupuesto: ['nivel1', 'nivel2', 'monto'],
   Proyeccion: ['mes', 'ingreso_base', 'ingreso_extra', 'pago_deuda', 'nota'],
-  Deudas: ['nombre', 'saldo', 'tasa', 'minimo', 'nota'],
+  Deudas: ['nombre', 'saldo', 'tasa', 'minimo', 'nota', 'saldo_inicial'],
   Sugerencias: ['nivel3', 'nivel1', 'nivel2', 'ambito', 'motivo', 'confianza'],
+  Repartos: ['comercio', 'categoria', 'destino', 'porcentaje', 'nota'],
+  Reglas: ['contiene', 'nivel1', 'nivel2', 'ambito'],
 };
 const NO_GASTO = ['Ingreso', 'Transferencia'];
 const SERIES_N1 = ['Fijos', 'Variables', 'Deuda', 'Negocio'];
@@ -20,7 +22,7 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 const store = (k, v) => { try { return v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); } catch { return null; } };
 const estado = t => $('#estado').textContent = t;
 
-let token = null, sheetId = store('finanzas:sheet'), D = { Movimientos: [], Presupuesto: [], Proyeccion: [], Deudas: [] };
+let token = null, sheetId = store('finanzas:sheet'), D = { Movimientos: [], Presupuesto: [], Proyeccion: [], Deudas: [], Sugerencias: [], Repartos: [], Reglas: [] };
 const charts = {};
 
 // ---------- Google ----------
@@ -105,7 +107,25 @@ async function reescribir(t, filas) {
 }
 
 // ---------- Datos derivados ----------
-const gastos = () => D.Movimientos.filter(m => !NO_GASTO.includes(m.nivel1));
+// Repartos: parte de un comercio que en realidad es otra categoría (p. ej. 15% de Amazon es Ocio).
+// Solo cambia los análisis (Resumen, Presupuesto, Plan); los movimientos del Sheet quedan igual.
+const reglaDe = m => D.Repartos.find(r => r.comercio && r.destino && +r.porcentaje > 0 && (!r.categoria || r.categoria === m.nivel2) &&
+  normaliza(`${m.nivel3} ${m.descripcion}`).includes(normaliza(r.comercio)));
+const nivel1De = n2 => (D.Movimientos.find(m => m.nivel2 === n2) || D.Presupuesto.find(p => p.nivel2 === n2))?.nivel1 || 'Variables';
+let AN = null; // caché; se limpia al guardar movimientos o repartos
+const analisis = () => AN ||= D.Movimientos.flatMap(m => {
+  const r = NO_GASTO.includes(m.nivel1) ? null : reglaDe(m);
+  if (!r) return [m];
+  const p = Math.min(100, +r.porcentaje) / 100;
+  // bruto: monto de la compra completa (para "compras chicas"); parte: la porción repartida, no cuenta como otra compra
+  return [{ ...m, monto: m.monto * (1 - p), bruto: m.monto },
+    { ...m, id: m.id + ':r', nivel1: nivel1De(r.destino), nivel2: r.destino, monto: m.monto * p, bruto: m.monto, parte: true }];
+});
+// gastos únicos (muebles, anticipos…): se marcan con #único en la nota y no entran a promedios
+const UNICO = '#único';
+const esUnico = m => /#[uú]nico/i.test(m.nota || '');
+
+const gastos = () => analisis().filter(m => !NO_GASTO.includes(m.nivel1));
 const meses = () => [...new Set(D.Movimientos.map(m => m.mes))].sort();
 const suma = (arr, f = m => m.monto) => arr.reduce((s, m) => s + f(m), 0);
 // el primer y el último mes vienen incompletos (los cortes de tarjeta no coinciden con el mes) → no entran a promedios
@@ -113,7 +133,7 @@ const mesesCompletos = n => meses().slice(1, -1).slice(-n);
 const mesesPres = () => +(store('finanzas:mesesPres') || 3);
 function promedioMensual(filtro, n) {
   const ms = mesesCompletos(n);
-  return ms.length ? suma(D.Movimientos.filter(m => ms.includes(m.mes) && filtro(m))) / ms.length : 0;
+  return ms.length ? suma(analisis().filter(m => ms.includes(m.mes) && !esUnico(m) && filtro(m))) / ms.length : 0;
 }
 const ingresoPromedio = () => promedioMensual(m => m.nivel1 === 'Ingreso' && m.nivel2 !== 'Extraordinario', 6);
 
@@ -128,22 +148,28 @@ function pintarResumen() {
   // "sin deuda": quita intereses y comisiones para ver el costo de tu nivel de vida
   const sinDeuda = $('#fSinDeuda').checked;
   const esGasto = m => !NO_GASTO.includes(m.nivel1) && !(sinDeuda && m.nivel1 === 'Deuda');
-  const M = D.Movimientos.filter(m => (prom ? msProm.includes(m.mes) : !per || m.mes === per) && (!amb || m.ambito === amb) && enCuenta(m));
+  const enFiltro = m => (prom ? msProm.includes(m.mes) : !per || m.mes === per) && (!amb || m.ambito === amb) && enCuenta(m);
+  // en promedios no entran los gastos únicos; en un periodo sí, y se avisa cuánto suman
+  const M = analisis().filter(m => enFiltro(m) && !(prom && esUnico(m)));
   const G = M.filter(esGasto);
   const ing = suma(M.filter(m => m.nivel1 === 'Ingreso')) / div;
   const extra = suma(M.filter(m => m.nivel2 === 'Extraordinario')) / div;
   const gas = -suma(G) / div, intereses = -suma(M.filter(m => m.nivel1 === 'Deuda')) / div;
+  const unicos = -suma(G.filter(esUnico)), unicosProm = prom ? -suma(analisis().filter(m => enFiltro(m) && esUnico(m) && esGasto(m))) : 0;
   const nMeses = per ? 1 : meses().length;
   const falta = gas - (ing - extra);
   $('#promInfo').textContent = prom && msProm.length ? `Promedio mensual de ${msProm.length} meses: ${nombreMes(msProm[0])} – ${nombreMes(msProm.at(-1))}` : '';
   $('#kpis').innerHTML = [
     ['Ingresos' + (prom ? ' al mes' : ''), fmt(ing), extra ? `incluye ${fmt(extra)} extraordinario` : ''],
-    ['Gastos' + (sinDeuda ? ' sin deuda' : '') + (prom ? ' al mes' : ''), fmt(gas), per || prom ? '' : `${fmt(gas / nMeses)} al mes`],
+    ['Gastos' + (sinDeuda ? ' sin deuda' : '') + (prom ? ' al mes' : ''), fmt(gas),
+      unicos ? `incluye ${fmt(unicos)} de gastos únicos` : unicosProm ? `sin ${fmt(unicosProm / div)} al mes de gastos únicos` : per || prom ? '' : `${fmt(gas / nMeses)} al mes`],
     sinDeuda
       ? ['Ingreso necesario sin deuda', fmt(gas), `${falta > 0 ? 'te faltan' : 'te sobran'} ${fmt(Math.abs(falta))} sin contar extraordinarios`]
       : ['Intereses y comisiones', fmt(intereses), `${Math.round(intereses / (gas || 1) * 100)}% de tus gastos`],
     ['Balance' + (sinDeuda ? ' sin deuda' : ''), `<span class="${ing - gas < 0 ? 'neg' : 'pos'}">${fmt(ing - gas)}</span>`, sinDeuda ? `la deuda te cuesta ${fmt(intereses)} en intereses` : ''],
-  ].map(([t, v, s]) => `<div class="kpi"><small>${t}</small><b>${v}</b><small>${s}</small></div>`).join('');
+  ].map(([t, v, s], i) => `<div class="kpi ${['k-ing', 'k-gas', sinDeuda ? 'k-gas' : 'k-int', 'k-bal'][i]}"><small>${t}</small><b>${v}</b><small>${s}</small></div>`).join('');
+  $('#vacio').hidden = D.Movimientos.length > 0;
+  pintarSemaforo(); pintarMeta(); pintarComparar();
   pintarRecorte(amb, enCuenta);
 
   // gasto por mes, apilado por nivel 1
@@ -167,7 +193,7 @@ function pintarResumen() {
   $('#gCatWrap').style.height = Math.max(200, porCat.length * 28 + 40) + 'px';
   grafica('gCat', {
     type: 'bar',
-    data: { labels: porCat.map(c => c[0]), datasets: [{ label: 'Gasto', data: porCat.map(c => -c[1] / div), backgroundColor: css('--series-1'), borderRadius: 4, borderSkipped: 'start' }] },
+    data: { labels: porCat.map(c => c[0]), datasets: [{ label: 'Gasto', data: porCat.map(c => -c[1] / div), backgroundColor: porCat.map(c => colorDe(c[0])), borderRadius: 4, borderSkipped: 'start' }] },
     options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { ticks: { callback: fmt } }, y: { grid: { display: false } } },
       onClick: (_, els) => { if (els[0]) { catDet = porCat[els[0].index][0]; pintarResumen(); $('#detalle').scrollIntoView({ behavior: 'smooth' }); } },
       onHover: (e, els) => e.native.target.style.cursor = els[0] ? 'pointer' : 'default' },
@@ -176,21 +202,85 @@ function pintarResumen() {
 
   const top = Object.values(G.reduce((acc, m) => {
     const a = acc[destino(m)] ||= { n3: destino(m), n2: m.nivel2, veces: 0, total: 0 };
-    a.veces++; a.total -= m.monto; return acc;
+    a.veces += m.parte ? 0 : 1; a.total -= m.monto; return acc;
   }, {})).sort((a, b) => b.total - a.total).slice(0, 15);
   $('#tTop').innerHTML = `<tr><th>Comercio / destino</th><th>Categoría</th><th class="n">Veces${prom ? ' al mes' : ''}</th><th class="n">${prom ? 'Al mes' : 'Total'}</th></tr>` +
     top.map(t => `<tr><td>${esc(t.n3)}</td><td>${esc(t.n2)}</td><td class="n">${+(t.veces / div).toFixed(1)}</td><td class="n">${fmt(t.total / div)}</td></tr>`).join('');
+}
+
+// ---------- Colores por categoría ----------
+// la misma categoría lleva el mismo color en todas las gráficas (asignado por gasto total, de mayor a menor)
+const PALETA = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#9b59d0', '#e0457b', '#14a3b8', '#8a9a2e', '#c0622f', '#5b6cd9', '#d4a72c', '#3fb6a8', '#b5487a', '#6f8fd0', '#c97b4a', '#7cae4f'];
+let COLOR = {};
+const coloresCategoria = () => { COLOR = Object.fromEntries(agrupa(gastos(), m => m.nivel2).sort((a, b) => a[1] - b[1]).map(([c], i) => [c, PALETA[i % PALETA.length]])); };
+const colorDe = c => COLOR[c] || css('--text-muted');
+const punto = c => `<span class="dot" style="background:${colorDe(c)}"></span>`;
+
+// ---------- Semáforo del mes ----------
+function pintarSemaforo() {
+  const mes = (!$('#fProm').checked && $('#fPeriodo').value) || meses().at(-1);
+  const cats = D.Presupuesto.filter(p => p.nivel1 !== 'Deuda' && +p.monto > 0);
+  const caja = $('#semaforo');
+  caja.hidden = !mes;
+  if (!mes) return;
+  if (!cats.length) return caja.innerHTML = '<h2>¿Cómo voy este mes?</h2><p class="muted">Captura tu presupuesto en 🎯 Presupuesto para ver aquí cómo vas contra él.</p>';
+  const hoy = new Date(), [y, mm] = mes.split('-').map(Number), dias = new Date(y, mm, 0).getDate();
+  const enCurso = hoy.getFullYear() === y && hoy.getMonth() + 1 === mm, avance = enCurso ? hoy.getDate() / dias : 1;
+  const G = analisis().filter(m => m.mes === mes && !NO_GASTO.includes(m.nivel1) && m.nivel1 !== 'Deuda');
+  const filas = cats.map(p => { const g = -suma(G.filter(m => m.nivel2 === p.nivel2)); return { cat: p.nivel2, pres: +p.monto, g, pct: g / p.monto }; })
+    .sort((a, b) => b.pct - a.pct);
+  // verde: a ritmo del mes; ámbar: más rápido que los días que van; rojo: ya se pasó
+  const color = f => f.pct > 1 ? 'rojo' : f.pct > avance ? 'ambar' : 'verde';
+  const tp = suma(filas, f => f.pres), tg = suma(filas, f => f.g);
+  caja.innerHTML = `<h2>${nombreMes(mes)}: ¿cómo voy contra el presupuesto?</h2>
+    <p class="muted">${enCurso ? `Van ${hoy.getDate()} de ${dias} días. ` : ''}Llevas <b>${fmt(tg)}</b> de ${fmt(tp)}: ${tg > tp ? `<span class="neg">te pasaste ${fmt(tg - tp)}</span>` : `te quedan <b class="pos">${fmt(tp - tg)}</b>`}.
+    Verde = vas a ritmo · ámbar = vas más rápido que el mes · rojo = ya te pasaste. Lo de tarjetas llega con el corte, así que lo más reciente puede faltar.</p>
+    <div class="sem">${filas.map(f => `<div class="c"><span>${punto(f.cat)}${esc(f.cat)}</span><span class="${f.pct > 1 ? 'neg' : ''}">${fmt(f.g)} <span class="muted">/ ${fmt(f.pres)}</span></span>
+      <div class="pista"><div class="${color(f)}" style="width:${Math.min(100, f.pct * 100)}%"></div></div></div>`).join('')}</div>`;
+}
+
+// ---------- Meta de deuda ----------
+function pintarMeta() {
+  const { deudas, E } = estrategias(), total = suma(deudas, d => d.saldo);
+  $('#metaDeuda').hidden = !total;
+  if (!total) return;
+  const inicial = Math.max(total, suma(D.Deudas, d => +d.saldo_inicial || +d.saldo || 0)), pagado = inicial - total;
+  $('#metaDeuda').innerHTML = `<div><small class="muted">Meta: cero deudas · debes</small><br><b class="grande">${fmt(total)}</b>
+      <span class="muted"> de ${fmt(inicial)} · llevas pagado ${fmt(pagado)} (${Math.round(pagado / inicial * 100)}%)</span></div>
+    <div style="text-align:right"><small class="muted">Libre de deudas (avalancha)</small><br><b class="grande">${fechaLibre(E[0][1])}</b><br>
+      <small class="neg">${fmt(suma(deudas, d => interesMensual(d.saldo, d.tasa)))} de intereses al mes</small></div>
+    <div class="pista"><div style="width:${pagado / inicial * 100}%"></div></div>`;
+}
+
+// ---------- Comparar meses ----------
+function pintarComparar() {
+  const ms = meses().slice().reverse();
+  for (const s of ['#cmpA', '#cmpB']) { const v = $(s).value; $(s).innerHTML = ms.map(m => `<option value="${m}">${nombreMes(m)}</option>`).join(''); if (v) $(s).value = v; }
+  const comp = mesesCompletos(2);
+  if (!$('#cmpA').dataset.listo && comp.length === 2) { $('#cmpA').value = comp[1]; $('#cmpB').value = comp[0]; $('#cmpA').dataset.listo = 1; }
+  const a = $('#cmpA').value, b = $('#cmpB').value, G = gastos();
+  const tot = mes => Object.fromEntries(agrupa(G.filter(m => m.mes === mes), m => m.nivel2).map(([k, v]) => [k, -v]));
+  const A = tot(a), B = tot(b);
+  const filas = [...new Set([...Object.keys(A), ...Object.keys(B)])].map(c => ({ c, a: A[c] || 0, b: B[c] || 0 }))
+    .map(f => ({ ...f, d: f.a - f.b })).filter(f => Math.abs(f.d) >= 50).sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
+  const max = Math.max(1, ...filas.map(f => Math.abs(f.d)));
+  const ta = suma(Object.values(A), x => x), tb = suma(Object.values(B), x => x);
+  $('#cmpInfo').innerHTML = `Total ${fmt(ta)} contra ${fmt(tb)}: <span class="${ta > tb ? 'neg' : 'pos'}">${ta > tb ? '+' : ''}${fmt(ta - tb)}</span>`;
+  $('#tCmp').innerHTML = `<tr><th>Categoría</th><th class="n">${nombreMes(a)}</th><th class="n">${nombreMes(b)}</th><th class="n">Diferencia</th><th style="width:30%"></th></tr>` +
+    filas.map(f => `<tr><td class="ancho">${punto(f.c)}${esc(f.c)}</td><td class="n" data-l="${nombreMes(a)}">${fmt(f.a)}</td><td class="n muted" data-l="${nombreMes(b)}">${fmt(f.b)}</td>
+      <td class="n ${f.d > 0 ? 'neg' : 'pos'}" data-l="Diferencia">${f.d > 0 ? '+' : ''}${fmt(f.d)}</td>
+      <td class="ancho"><div class="barra" style="width:${Math.abs(f.d) / max * 100}%;background:var(${f.d > 0 ? '--critical' : '--good'})"></div></td></tr>`).join('');
 }
 
 // ---------- Dónde recortar ----------
 // variables de los últimos 3 meses completos vs. los 3 anteriores, con compras chicas y presupuesto
 function pintarRecorte(amb, enCuenta) {
   const ms = mesesCompletos(6), rec = ms.slice(-3), ant = ms.slice(0, -3);
-  const V = D.Movimientos.filter(m => m.nivel1 === 'Variables' && m.monto < 0 && (!amb || m.ambito === amb) && enCuenta(m));
+  const V = analisis().filter(m => m.nivel1 === 'Variables' && m.monto < 0 && !esUnico(m) && (!amb || m.ambito === amb) && enCuenta(m));
   const prom = (cat, lista) => lista.length ? -suma(V.filter(m => m.nivel2 === cat && lista.includes(m.mes))) / lista.length : 0;
   const filas = [...new Set(V.filter(m => rec.includes(m.mes)).map(m => m.nivel2))].map(cat => ({
     cat, ahora: prom(cat, rec), antes: prom(cat, ant), pres: presDe(cat),
-    chicas: V.filter(m => m.nivel2 === cat && rec.includes(m.mes) && m.monto > -300).length / (rec.length || 1),
+    chicas: V.filter(m => m.nivel2 === cat && rec.includes(m.mes) && (m.bruto ?? m.monto) > -300).length / (rec.length || 1),
   })).filter(f => f.ahora >= 100).sort((a, b) => b.ahora - a.ahora);
   const tend = f => {
     if (!f.antes) return '<span class="muted">nuevo</span>';
@@ -199,9 +289,9 @@ function pintarRecorte(amb, enCuenta) {
   };
   $('#tRecorte').innerHTML = rec.length < 3 ? '<tr><td class="muted">Hacen falta al menos 3 meses completos.</td></tr>' :
     `<tr><th>Categoría</th><th class="n">Al mes ahora</th><th class="n">Antes</th><th class="n">Tendencia</th><th class="n">Compras chicas al mes</th><th class="n">Presupuesto</th><th class="n">Si recortas 20%</th></tr>` +
-    filas.map(f => `<tr data-cat="${esc(f.cat)}"><td>${esc(f.cat)}</td><td class="n">${fmt(f.ahora)}</td><td class="n muted">${f.antes ? fmt(f.antes) : '—'}</td>
-      <td class="n">${tend(f)}</td><td class="n">${f.chicas >= 1 ? Math.round(f.chicas) : '—'}</td>
-      <td class="n ${f.pres && f.ahora > f.pres ? 'neg' : ''}">${f.pres ? fmt(f.pres) : '—'}</td><td class="n pos">${fmt(f.ahora * 0.2)}</td></tr>`).join('') +
+    filas.map(f => `<tr data-cat="${esc(f.cat)}"><td class="ancho">${punto(f.cat)}<b>${esc(f.cat)}</b></td><td class="n" data-l="Al mes ahora">${fmt(f.ahora)}</td><td class="n muted" data-l="Antes">${f.antes ? fmt(f.antes) : '—'}</td>
+      <td class="n" data-l="Tendencia">${tend(f)}</td><td class="n" data-l="Compras chicas al mes">${f.chicas >= 1 ? Math.round(f.chicas) : '—'}</td>
+      <td class="n ${f.pres && f.ahora > f.pres ? 'neg' : ''}" data-l="Presupuesto">${f.pres ? fmt(f.pres) : '—'}</td><td class="n pos" data-l="Si recortas 20%">${fmt(f.ahora * 0.2)}</td></tr>`).join('') +
     `<tr class="sub"><th>Total variables</th><th class="n">${fmt(suma(filas, f => f.ahora))}</th><th class="n">${fmt(suma(filas, f => f.antes))}</th><th></th><th></th><th></th><th class="n">${fmt(suma(filas, f => f.ahora) * 0.2)}</th></tr>`;
 }
 
@@ -225,7 +315,7 @@ function pintarDetalle(G, div, cats) {
   $('#gDetWrap').style.height = Math.max(160, barras.length * 30 + 40) + 'px';
   grafica('gDet', {
     type: 'bar',
-    data: { labels: barras.map(g => g.k.length > 45 ? g.k.slice(0, 44) + '…' : g.k), datasets: [{ label: catDet, data: barras.map(g => g.total), backgroundColor: css('--series-2'), borderRadius: 4, borderSkipped: 'start' }] },
+    data: { labels: barras.map(g => g.k.length > 45 ? g.k.slice(0, 44) + '…' : g.k), datasets: [{ label: catDet, data: barras.map(g => g.total), backgroundColor: colorDe(catDet), borderRadius: 4, borderSkipped: 'start' }] },
     options: { indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${fmt(c.parsed.x)} · ${Math.round(c.parsed.x / (total || 1) * 100)}%` } } },
       scales: { x: { ticks: { callback: fmt } }, y: { grid: { display: false } } } },
   });
@@ -258,7 +348,7 @@ function pintarMovimientos() {
   $('#mInfo').textContent = `${F.length} movimientos · neto ${fmt(suma(F))}` + (F.length > LIM ? ` · se muestran los primeros ${LIM}, filtra para ver más` : '');
   const th = (k, t, cls = '') => `<th data-sort="${k}" class="${cls}" style="cursor:pointer">${t}${orden.k === k ? (orden.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`;
   $('#tMov').innerHTML = `<tr><th><input type="checkbox" id="selTodos" title="Seleccionar todos los visibles" ${visibles.length && visibles.every(m => sel.has(m.id)) ? 'checked' : ''}></th>` +
-    th('fecha', 'Fecha') + th('cuenta', 'Cuenta') + th('nivel3', 'Comercio / destino') + th('monto', 'Monto', 'n') + th('nivel1', 'Nivel 1') +
+    th('fecha', 'Fecha') + th('cuenta', 'Cuenta') + th('nivel3', 'Comercio / destino') + th('monto', 'Monto', 'n') + '<th>Único</th>' + th('nivel1', 'Nivel 1') +
     th('nivel2', 'Nivel 2') + th('ambito', 'Ámbito') + '<th>Sugerencia IA</th>' + th('nota', 'Nota') + '<th></th></tr>' + visibles.map(filaHTML).join('');
   pintarBulk();
 }
@@ -274,6 +364,11 @@ async function aceptarSugerencias(lista) {
   await guardarMovs(lista);
 }
 const sel = new Set();
+// agrega o quita la marca #único de la nota
+function marcaUnico(m, on) {
+  const sin = (m.nota || '').replace(/\s*·?\s*#[uú]nico/gi, '').trim();
+  m.nota = on ? (sin ? `${sin} · ${UNICO}` : UNICO) : sin;
+}
 
 function pintarBulk() {
   $('#bulk').hidden = !sel.size;
@@ -288,15 +383,16 @@ function pintarBulk() {
 
 const filaHTML = m => `<tr data-id="${esc(m.id)}">
       <td><input type="checkbox" data-sel ${sel.has(m.id) ? 'checked' : ''}></td>
-      <td>${esc(m.fecha)}</td><td class="muted">${esc(m.cuenta)}</td>
-      <td title="${esc(m.descripcion)}"><input data-k="nivel3" value="${esc(m.nivel3)}"></td>
-      <td class="n ${m.monto < 0 ? '' : 'pos'}">${fmt(m.monto)}${m.msi ? ` <span class="muted">${esc(m.msi)}</span>` : ''}</td>
-      <td>${desplegable('nivel1', m.nivel1)}</td>
-      <td>${desplegable('nivel2', m.nivel2)}</td>
-      <td>${desplegable('ambito', m.ambito)}</td>
-      <td>${sugDe(m) ? `<span title="${esc(sugDe(m).motivo)} · confianza ${esc(sugDe(m).confianza)}">${esc(sugDe(m).nivel2)}${sugDe(m).confianza === 'baja' ? ' <span class="muted">(?)</span>' : ''}</span>
+      <td data-l="${esc(m.cuenta)}">${esc(m.fecha)}</td><td class="muted solo-pc">${esc(m.cuenta)}</td>
+      <td class="ancho" title="${esc(m.descripcion)}"><input data-k="nivel3" value="${esc(m.nivel3)}"></td>
+      <td class="n ${m.monto < 0 ? '' : 'pos'}" data-l="Monto">${fmt(m.monto)}${m.msi ? ` <span class="muted">${esc(m.msi)}</span>` : ''}</td>
+      <td data-l="Único"><label title="Gasto único (muebles, anticipos…): no entra a los promedios"><input type="checkbox" data-unico ${esUnico(m) ? 'checked' : ''}> único</label></td>
+      <td data-l="Nivel 1">${desplegable('nivel1', m.nivel1)}</td>
+      <td data-l="Categoría">${desplegable('nivel2', m.nivel2)}</td>
+      <td data-l="Ámbito">${desplegable('ambito', m.ambito)}</td>
+      <td data-l="Sugerencia IA">${sugDe(m) ? `<span title="${esc(sugDe(m).motivo)} · confianza ${esc(sugDe(m).confianza)}">${esc(sugDe(m).nivel2)}${sugDe(m).confianza === 'baja' ? ' <span class="muted">(?)</span>' : ''}</span>
         <button class="btn sec" data-sug title="Aceptar sugerencia">✓</button>` : ''}</td>
-      <td><input data-k="nota" value="${esc(m.nota)}" title="${esc(m.nota)}"></td>
+      <td class="ancho" data-l="Nota"><input data-k="nota" value="${esc(m.nota)}" title="${esc(m.nota)}"></td>
       <td><button class="btn sec" data-iguales title="Aplicar esta categoría a todos los movimientos de este comercio">a todos</button></td></tr>`;
 
 // opciones de los desplegables de categoría; "+ Nueva…" agrega a estas listas
@@ -328,6 +424,7 @@ function listas() {
 
 const filaMov = m => ['nivel1', 'nivel2', 'nivel3', 'ambito', 'msi', 'nota'].map(k => m[k]);
 async function guardarMovs(lista) {
+  AN = null;
   estado('Guardando…');
   await api(`/${sheetId}/values:batchUpdate`, { method: 'POST', body: JSON.stringify({
     valueInputOption: 'RAW', data: lista.map(m => ({ range: `Movimientos!G${m._row}:L${m._row}`, values: [filaMov(m)] })),
@@ -384,6 +481,7 @@ async function importar(file) {
     o.monto = +o.monto;
     const a = aprendido[o.nivel3 + (o.monto < 0)];
     if (a && !o.nota) Object.assign(o, { nivel1: a.nivel1, nivel2: a.nivel2, ambito: a.ambito });
+    aplicaRegla(o);
     return TABS.Movimientos.map(k => o[k]);
   });
   if (!nuevos.length) return alert('No hay movimientos nuevos en ese archivo.');
@@ -419,15 +517,15 @@ function pintarPresupuesto() {
   const ult = mesesCompletos(1)[0];
   const filas = categoriasGasto().map(c => ({ ...c, pres: presDe(c.nivel2),
     prom: -promedioMensual(m => m.nivel2 === c.nivel2, mesesPres()),
-    ult: -suma(D.Movimientos.filter(m => m.mes === ult && m.nivel2 === c.nivel2)) }));
+    ult: -suma(analisis().filter(m => m.mes === ult && m.nivel2 === c.nivel2)) }));
   const tot = k => fmt(suma(filas, f => f[k]));
   $('#tPres').innerHTML = `<tr><th>Nivel 1</th><th>Categoría</th><th class="n">Presupuesto</th><th class="n">Promedio ${rangoPromedio()}</th><th class="n">${ult ? nombreMes(ult) : ''}</th><th style="width:25%">Uso del presupuesto</th></tr>` +
     filas.map(f => {
       const pct = f.pres ? f.ult / f.pres : 0;
-      return `<tr><td class="muted">${esc(f.nivel1)}</td><td>${esc(f.nivel2)}</td>
-      <td class="n"><input class="num moneda" inputmode="decimal" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${fmtIn(f.pres || '')}"></td>
-      <td class="n">${fmt(f.prom)}</td><td class="n">${fmt(f.ult)}</td>
-      <td>${f.pres ? `<div class="barra ${pct > 1 ? 'sobre' : ''}" style="width:${Math.min(100, pct * 100)}%" title="${Math.round(pct * 100)}%"></div>` : ''}</td></tr>`;
+      return `<tr><td class="muted">${esc(f.nivel1)}</td><td>${punto(f.nivel2)}${esc(f.nivel2)}</td>
+      <td class="n" data-l="Presupuesto"><input class="num moneda" inputmode="decimal" data-n1="${esc(f.nivel1)}" data-n2="${esc(f.nivel2)}" value="${fmtIn(f.pres || '')}"></td>
+      <td class="n" data-l="Promedio">${fmt(f.prom)}</td><td class="n" data-l="${ult ? nombreMes(ult) : ''}">${fmt(f.ult)}</td>
+      <td class="ancho">${f.pres ? `<div class="barra ${pct > 1 ? 'sobre' : ''}" style="width:${Math.min(100, pct * 100)}%" title="${Math.round(pct * 100)}%"></div>` : ''}</td></tr>`;
     }).join('') + `<tr class="sub"><th></th><th>Total gastos</th><th class="n">${tot('pres')}</th><th class="n">${tot('prom')}</th><th class="n">${tot('ult')}</th><th></th></tr>` +
     filaDeuda(suma(filas, f => f.pres), ult);
 }
@@ -456,6 +554,63 @@ function leerPresupuesto() {
     .map(i => ({ nivel1: i.dataset.n1, nivel2: i.dataset.n2, monto: aNumero(i.value) }));
 }
 
+// ---------- Reglas de categoría ----------
+// "si la descripción contiene X → categoría Y"; la primera que coincide gana
+const reglaCat = m => D.Reglas.find(r => r.contiene && r.nivel2 && normaliza(`${m.nivel3} ${m.descripcion}`).includes(normaliza(r.contiene)));
+function aplicaRegla(m) {
+  const r = reglaCat(m);
+  if (!r) return false;
+  const nuevo = { nivel1: r.nivel1 || nivel1De(r.nivel2), nivel2: r.nivel2, ambito: r.ambito || m.ambito };
+  if (nuevo.nivel1 === m.nivel1 && nuevo.nivel2 === m.nivel2 && nuevo.ambito === m.ambito) return false;
+  Object.assign(m, nuevo);
+  return true;
+}
+
+const opcionesCat = (v, vacio) => `<option value="">${vacio}</option>` +
+  [...new Set([...OPC.nivel2, v].filter(Boolean))].map(x => `<option value="${esc(x)}"${x === v ? ' selected' : ''}>${esc(x)}</option>`).join('');
+
+function pintarReglas() {
+  const cuenta = r => r.contiene ? D.Movimientos.filter(m => reglaCat(m) === r).length : 0;
+  $('#tReg').innerHTML = '<tr><th>Si la descripción contiene</th><th>Categoría</th><th>Ámbito</th><th class="n">Movimientos que coinciden</th><th></th></tr>' +
+    (D.Reglas.length ? '' : '<tr><td colspan="5" class="muted">Aún no hay reglas. Ejemplo: AMAZON → Casa consumibles. Da clic en “+ Regla”.</td></tr>') +
+    D.Reglas.map((r, i) => `<tr data-i="${i}"><td class="ancho" data-l="Si la descripción contiene"><input data-k="contiene" value="${esc(r.contiene)}" placeholder="AMAZON"></td>
+      <td data-l="Categoría"><select data-k="nivel2">${opcionesCat(r.nivel2, 'Elige…')}</select></td>
+      <td data-l="Ámbito"><select data-k="ambito"><option value="">Sin cambio</option>${OPC.ambito.map(a => `<option${a === r.ambito ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></td>
+      <td class="n" data-l="Coinciden">${cuenta(r)}</td><td><button class="btn sec" data-quitar title="Quitar">✕</button></td></tr>`).join('');
+}
+
+function leerReglas() {
+  D.Reglas = [...document.querySelectorAll('#tReg tr[data-i]')].map(tr => {
+    const o = {}; tr.querySelectorAll('[data-k]').forEach(i => o[i.dataset.k] = i.value.trim());
+    return { ...o, nivel1: o.nivel2 ? nivel1De(o.nivel2) : '' };
+  });
+}
+
+// ---------- Repartos ----------
+function pintarRepartos() {
+  const ms = mesesCompletos(mesesPres());
+  const cats = opcionesCat;
+  $('#tRep').innerHTML = (D.Repartos.length ? '' : '<tr><td class="muted">Sin repartos. Ejemplo: AMAZON, solo en Casa consumibles → Ocio 15%.</td></tr>') + '<tr><th>Si la descripción contiene</th><th>Solo en la categoría</th><th>Mandar a</th><th class="n">%</th><th class="n">≈ al mes</th><th class="n">Comercio al mes</th><th>Nota</th><th></th></tr>' +
+    D.Repartos.map((r, i) => {
+      // cuánto mueve: total del comercio (antes de repartir) en los meses del promedio
+      const base = ms.length ? -suma(D.Movimientos.filter(m => ms.includes(m.mes) && reglaDe(m) === r)) / ms.length : 0;
+      return `<tr data-i="${i}"><td class="ancho" data-l="Si la descripción contiene"><input data-k="comercio" value="${esc(r.comercio)}" placeholder="AMAZON"></td>
+      <td data-l="Solo en la categoría"><select data-k="categoria">${cats(r.categoria, 'Cualquiera')}</select></td>
+      <td data-l="Mandar a"><select data-k="destino">${cats(r.destino, 'Elige…')}</select></td>
+      <td class="n" data-l="%"><input class="num" type="number" min="0" max="100" step="1" data-k="porcentaje" value="${esc(r.porcentaje)}"></td>
+      <td class="n" data-l="≈ al mes">${fmt(base * (+r.porcentaje || 0) / 100)}</td><td class="n muted" data-l="Comercio al mes">${fmt(base)}</td>
+      <td class="ancho" data-l="Nota"><input data-k="nota" value="${esc(r.nota)}"></td>
+      <td><button class="btn sec" data-quitar title="Quitar">✕</button></td></tr>`;
+    }).join('');
+}
+
+function leerRepartos() {
+  D.Repartos = [...document.querySelectorAll('#tRep tr[data-i]')].map(tr => {
+    const o = {}; tr.querySelectorAll('[data-k]').forEach(i => o[i.dataset.k] = i.type === 'number' ? (i.value === '' ? '' : +i.value) : i.value.trim()); return o;
+  });
+  AN = null;
+}
+
 // ---------- Plan y deudas ----------
 function mesesProyeccion() {
   const hoy = new Date(), out = [];
@@ -479,7 +634,7 @@ function proyeccion() {
   });
 }
 
-function pintarPlan() {
+function estrategias() {
   const P = proyeccion();
   const deudas = D.Deudas.map(d => ({ nombre: d.nombre, saldo: +d.saldo || 0, tasa: +d.tasa || 0, minimo: +d.minimo || 0 }));
   const pago = i => (P[i] || P.at(-1))?.pago || 0;
@@ -489,7 +644,12 @@ function pintarPlan() {
     ['Bola de nieve (saldo más chico primero)', simular(deudas, pago, 'bola')],
     ['Solo pagos mínimos', simular(deudas, () => minimos, 'avalancha')],
   ];
-  const av = E[0][1];
+  return { P, deudas, minimos, E };
+}
+const fechaLibre = r => r.libre ? nombreMes(new Date(new Date().getFullYear(), new Date().getMonth() + r.meses.length, 1).toISOString().slice(0, 7)) : 'no se liquida';
+
+function pintarPlan() {
+  const { P, deudas, minimos, E } = estrategias(), av = E[0][1];
 
   $('#tProy').innerHTML = `<tr><th>Mes</th><th class="n">Ingreso base</th><th class="n">Ingreso extra</th><th class="n">Gastos (${totalPresupuesto() ? 'presupuesto' : 'promedio real'})</th><th class="n">Disponible</th><th class="n">Pago a deudas</th><th class="n">Deuda al cierre</th><th>Nota</th></tr>` +
     P.map((p, i) => `<tr data-mes="${p.mes}"><td>${nombreMes(p.mes)}</td>
@@ -500,15 +660,15 @@ function pintarPlan() {
       <td class="n">${av.meses[i] ? fmt(av.meses[i].total) : fmt(0)}</td>
       <td><input data-k="nota" value="${esc(p.nota)}"></td></tr>`).join('');
 
-  $('#tDeudas').innerHTML = '<tr><th>Tarjeta</th><th class="n">Saldo</th><th class="n">Tasa anual %</th><th class="n">Pago mínimo</th><th class="n">Interés al mes (con IVA)</th><th>Nota</th></tr>' +
+  $('#tDeudas').innerHTML = '<tr><th>Tarjeta</th><th class="n">Saldo</th><th class="n">Tasa anual %</th><th class="n">Pago mínimo</th><th class="n">Interés al mes (con IVA)</th><th class="n" title="Con cuánto empezaste: sirve para medir tu avance">Saldo inicial (meta)</th><th>Nota</th></tr>' +
     D.Deudas.map((d, i) => `<tr data-i="${i}"><td><input data-k="nombre" value="${esc(d.nombre)}"></td>
       <td class="n"><input class="num moneda" inputmode="decimal" data-k="saldo" value="${fmtIn(d.saldo)}"></td>
       <td class="n"><input class="num" type="number" step="0.01" data-k="tasa" value="${d.tasa}"></td>
       <td class="n"><input class="num moneda" inputmode="decimal" data-k="minimo" value="${fmtIn(d.minimo)}"></td>
       <td class="n">${fmt(interesMensual(+d.saldo || 0, +d.tasa || 0))}</td>
+      <td class="n"><input class="num moneda" inputmode="decimal" data-k="saldo_inicial" placeholder="${fmt(d.saldo)}" value="${fmtIn(d.saldo_inicial)}"></td>
       <td><input data-k="nota" value="${esc(d.nota)}"></td></tr>`).join('');
 
-  const fechaLibre = r => r.libre ? nombreMes(new Date(new Date().getFullYear(), new Date().getMonth() + r.meses.length, 1).toISOString().slice(0, 7)) : 'no se liquida';
   const total = suma(deudas, d => d.saldo);
   $('#kpisPlan').innerHTML = [
     ['Deuda total', fmt(total)],
@@ -545,11 +705,11 @@ function leerPlan() {
     .filter(p => p.ingreso_base !== '' || p.ingreso_extra !== '' || p.pago_deuda !== '' || p.nota);
   D.Deudas = [...document.querySelectorAll('#tDeudas tr[data-i]')].map(tr => {
     const o = {}; tr.querySelectorAll('input').forEach(i => o[i.dataset.k] = i.classList.contains('moneda') ? aNumero(i.value) : i.type === 'number' ? +i.value || 0 : i.value); return o;
-  }).filter(d => d.nombre);
+  }).filter(d => d.nombre).map(d => ({ ...d, saldo_inicial: d.saldo_inicial || d.saldo }));
 }
 
 // ---------- Navegación y eventos ----------
-function pintarTodo() { listas(); pintarResumen(); pintarMovimientos(); pintarPresupuesto(); pintarPlan(); }
+function pintarTodo() { AN = null; listas(); coloresCategoria(); pintarResumen(); pintarMovimientos(); pintarPresupuesto(); pintarReglas(); pintarRepartos(); pintarPlan(); }
 
 $('#tabs').addEventListener('click', e => {
   const v = e.target.dataset.v; if (!v) return;
@@ -594,6 +754,12 @@ $('#tMov').addEventListener('change', conError(async e => {
     visibles.forEach(m => e.target.checked ? sel.add(m.id) : sel.delete(m.id));
     document.querySelectorAll('#tMov [data-sel]').forEach(c => c.checked = e.target.checked);
     return pintarBulk();
+  }
+  if (e.target.hasAttribute('data-unico')) {
+    const m = D.Movimientos.find(x => x.id === e.target.closest('tr').dataset.id);
+    marcaUnico(m, e.target.checked);
+    e.target.closest('tr').outerHTML = filaHTML(m);
+    return guardarMovs([m]);
   }
   if (e.target.hasAttribute('data-sel')) {
     const id = e.target.closest('tr').dataset.id;
@@ -647,6 +813,14 @@ $('#bulkAplicar').onclick = conError(async () => {
   ['nivel1', 'nivel2', 'ambito'].forEach(k => $('#b_' + k).value = '');
   listas(); pintarMovimientos();
 });
+$('#bulkUnico').onclick = conError(async () => {
+  const lista = D.Movimientos.filter(m => sel.has(m.id));
+  const on = !lista.every(esUnico);
+  lista.forEach(m => marcaUnico(m, on));
+  await guardarMovs(lista);
+  sel.clear(); pintarMovimientos();
+  estado(`${lista.length} ${on ? 'marcados' : 'desmarcados'} como gasto único ✓`);
+});
 $('#bulkQuitar').onclick = () => { sel.clear(); pintarMovimientos(); };
 $('#bulkSug').onclick = conError(async () => {
   const lista = D.Movimientos.filter(m => sel.has(m.id) && sugDe(m));
@@ -687,6 +861,37 @@ $('#btnGuardarPres').onclick = conError(async () => {
   leerPresupuesto(); await reescribir('Presupuesto', D.Presupuesto); estado('Presupuesto guardado ✓'); pintarPresupuesto(); pintarPlan();
 });
 $('#tPres').addEventListener('change', () => { leerPresupuesto(); pintarPresupuesto(); });
+// los repartos se ven en vivo en Presupuesto y Resumen; se guardan en el Sheet con el botón
+const repintarRepartos = () => { leerRepartos(); pintarRepartos(); pintarPresupuesto(); pintarResumen(); pintarPlan(); };
+$('#tRep').addEventListener('change', repintarRepartos);
+$('#tRep').addEventListener('click', e => {
+  if (!e.target.hasAttribute('data-quitar')) return;
+  e.target.closest('tr').remove(); repintarRepartos();
+});
+$('#btnAddRep').onclick = () => {
+  leerRepartos(); D.Repartos.push({ comercio: '', categoria: '', destino: '', porcentaje: '', nota: '' }); pintarRepartos();
+};
+$('#tReg').addEventListener('change', () => { leerReglas(); pintarReglas(); });
+$('#tReg').addEventListener('click', e => { if (e.target.hasAttribute('data-quitar')) { e.target.closest('tr').remove(); leerReglas(); pintarReglas(); } });
+$('#btnAddReg').onclick = () => { leerReglas(); D.Reglas.push({ contiene: '', nivel1: '', nivel2: '', ambito: '' }); pintarReglas(); };
+$('#btnGuardarReg').onclick = conError(async () => {
+  leerReglas(); D.Reglas = D.Reglas.filter(r => r.contiene && r.nivel2);
+  await reescribir('Reglas', D.Reglas); estado('Reglas guardadas ✓'); pintarReglas();
+});
+$('#btnAplicarReg').onclick = conError(async () => {
+  leerReglas();
+  const lista = D.Movimientos.filter(m => { const c = { ...m }; return aplicaRegla(c); });
+  if (!lista.length) return alert('Todos los movimientos ya cumplen las reglas.');
+  if (!confirm(`Cambiar la categoría de ${lista.length} movimientos según las reglas?`)) return;
+  lista.forEach(aplicaRegla);
+  await guardarMovs(lista); pintarTodo();
+});
+['#cmpA', '#cmpB'].forEach(s => $(s).onchange = pintarComparar);
+$('#btnGuardarRep').onclick = conError(async () => {
+  leerRepartos();
+  D.Repartos = D.Repartos.filter(r => r.comercio && r.destino);
+  await reescribir('Repartos', D.Repartos); estado('Repartos guardados ✓'); pintarTodo();
+});
 document.addEventListener('focusin', e => { if (e.target.matches('input.moneda')) { e.target.value = e.target.value && aNumero(e.target.value); e.target.select(); } });
 document.addEventListener('focusout', e => { if (e.target.matches('input.moneda') && e.target.value) e.target.value = fmtIn(aNumero(e.target.value)); });
 
