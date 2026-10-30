@@ -547,11 +547,12 @@ const filasPresupuesto = ult => categoriasGasto().map(c => ({ ...c, pres: presDe
   ult: ult ? -suma(analisis().filter(m => m.mes === ult && m.nivel2 === c.nivel2)) : 0 }));
 
 // reparte el ingreso: fijos y pago a deudas se respetan; lo que sobra se reparte entre los flexibles
-// en proporción a su presupuesto (o a su promedio si no tienen presupuesto)
+// en proporción a su presupuesto (o a su promedio si no tienen presupuesto). Ese monto es el tope:
+// si el ingreso sube, los gastos no suben; la diferencia queda como sobrante
 function ajuste(filas) {
   const ing = ingresoPlaneado(), fijos = suma(filas.filter(f => f.fijo), f => f.pres), deuda = presDeuda();
   const base = f => f.pres || f.prom, flex = suma(filas.filter(f => !f.fijo), base);
-  const libre = ing - fijos - deuda, factor = flex > 0 ? Math.max(0, libre) / flex : 0;
+  const libre = ing - fijos - deuda, factor = flex > 0 ? Math.min(1, Math.max(0, libre) / flex) : 0;
   return { ing, fijos, deuda, flex, libre, factor, de: f => f.fijo ? f.pres : redondea(base(f) * factor) };
 }
 
@@ -566,7 +567,7 @@ function pintarIngresos(aj) {
   $('#ajuste').innerHTML = aj.libre < 0
     ? `<b class="neg">Tus fijos (${fmt(aj.fijos)}) y el pago a deudas (${fmt(aj.deuda)}) suman ${fmt(aj.fijos + aj.deuda)}: superan tu ingreso por ${fmt(-aj.libre)}.</b> No queda nada para lo demás: baja algún fijo o el pago a deudas, o sube el ingreso.`
     : `Ingreso <b>${fmt(aj.ing)}</b> − fijos ${fmt(aj.fijos)} − pago a deudas ${fmt(aj.deuda)} = <b>${fmt(aj.libre)}</b> para lo demás.
-       Es el <b class="${pct < 100 ? 'neg' : 'pos'}">${pct}%</b> de lo que hoy tienes para esas categorías (${fmt(aj.flex)}): ${pct < 100 ? `cada una tendría que bajar ${100 - pct}%` : `te alcanza y sobran ${fmt(aj.libre - aj.flex)}`}.`;
+       ${pct < 100 ? `Es el <b class="neg">${pct}%</b> de` : 'Cubre el 100% de'} lo que hoy tienes para esas categorías (${fmt(aj.flex)}): ${pct < 100 ? `cada una tendría que bajar ${100 - pct}%` : `te alcanza: cada una se queda en su presupuesto (o promedio) y te sobran <b class="pos">${fmt(aj.libre - aj.flex)}</b> para ahorro o para pagar más deuda`}.`;
 }
 
 // deuda aparte: el pago a tarjetas + totales contra el ingreso promedio (sin extraordinarios)
